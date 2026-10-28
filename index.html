@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>まぼろしフォト</title>
+<meta name="description" content="AIのミッションで撮った写真が、決まった時間だけ地図に現れて消える。位置連動フォトシェア。">
+<meta name="theme-color" content="#22B8EE">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Dela+Gothic+One&family=M+PLUS+Rounded+1c:wght@500;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<div id="boot" class="boot"><span class="logo">まぼろし<br>フォト</span></div>
+
+<!-- ========== ログイン・登録 ========== -->
+<section id="authScreen" class="auth" hidden>
+  <video id="authVideo" class="bg-video" muted loop playsinline preload="none"></video>
+  <div class="auth-wrap">
+    <h1 class="logo">まぼろし<br>フォト</h1>
+    <p class="tagline">ミッションが来たら撮る。<br>写真は少しのあいだだけ、地図に浮かぶ。</p>
+
+    <div class="auth-card">
+      <div class="tabs" role="tablist">
+        <button class="tab active" data-tab="login" role="tab" type="button">ログイン</button>
+        <button class="tab" data-tab="register" role="tab" type="button">新規登録</button>
+        <button class="tab" data-tab="reset" role="tab" type="button">パスワード再発行</button>
+      </div>
+
+      <form id="loginForm" class="form" data-pane="login" autocomplete="on">
+        <label>メールアドレス<input name="email" type="email" required autocomplete="email"></label>
+        <label>パスワード
+          <span class="pw-wrap"><input name="password" type="password" required autocomplete="current-password"><button type="button" class="eye" aria-label="パスワードを表示"></button></span>
+        </label>
+        <label class="check"><input type="checkbox" name="remember" checked><span>ログインしたままにする</span></label>
+        <button class="btn primary block" type="submit">ログイン</button>
+      </form>
+
+      <form id="registerForm" class="form" data-pane="register" hidden>
+        <label>ニックネーム（地図に表示されます・20文字まで）<input name="nickname" type="text" maxlength="20" required></label>
+        <label>メールアドレス（仮パスワードが届きます）<input name="email" type="email" required autocomplete="email"></label>
+        <fieldset class="consent">
+          <legend>はじめる前に確認してください</legend>
+          <label class="check all"><input type="checkbox" id="agreeAll"><span>すべてに同意する</span></label>
+          <label class="check"><input type="checkbox" name="agree" value="location"><span><b>位置情報の利用</b>　撮影地点と、共有をオンにしている間の現在地を他の会員に表示します。他の人に見せる位置は約100mにぼかします。</span></label>
+          <label class="check"><input type="checkbox" name="agree" value="disclaimer"><span><b>免責事項</b>　個人が無償で運営しているサービスです。内容・継続・データの保存は保証しません。</span></label>
+          <label class="check"><input type="checkbox" name="agree" value="selfResp"><span><b>自己責任の原則</b>　撮影や移動は、周りの安全と法令を守り、自分の判断で行います。</span></label>
+          <label class="check"><input type="checkbox" name="agree" value="trouble"><span><b>トラブルの自己解決</b>　会員どうしのやりとりで起きたトラブルは、当事者間で解決します。</span></label>
+          <label class="check"><input type="checkbox" name="agree" value="privacy"><span><b>プライバシー保護</b>　他人の顔・車のナンバー・住まいなど、個人が分かるものを撮影・投稿しません。</span></label>
+        </fieldset>
+        <button id="registerSubmit" class="btn primary block" type="submit" disabled>登録して仮パスワードを受け取る</button>
+      </form>
+
+      <form id="resetForm" class="form" data-pane="reset" hidden>
+        <p class="muted small">登録したメールアドレスに仮パスワードを送ります。ログイン後に新しいパスワードを設定してください。</p>
+        <label>メールアドレス<input name="email" type="email" required autocomplete="email"></label>
+        <button class="btn primary block" type="submit">仮パスワードを再発行する</button>
+      </form>
+    </div>
+    <p class="center"><button type="button" class="linkbtn" data-open-tutorial>遊び方を見る</button></p>
+  </div>
+  <footer class="ver-foot">まぼろしフォト <span class="ver"></span></footer>
+</section>
+
+<!-- ========== メイン（地図） ========== -->
+<section id="mainScreen" class="main" hidden>
+  <div id="map" aria-label="地図"></div>
+
+  <header class="topbar">
+    <button id="missionChip" class="mission-chip" data-state="waiting" type="button">次のミッションを待っています</button>
+    <div class="top-actions">
+      <button id="soundBtn" class="icon-btn" type="button" aria-label="読み上げ" aria-pressed="false">🔇</button>
+      <button class="icon-btn" type="button" aria-label="遊び方" data-open-tutorial>？</button>
+      <button id="menuBtn" class="icon-btn" type="button" aria-label="メニュー">☰</button>
+    </div>
+  </header>
+
+  <button id="filterSummary" class="filter-pill" type="button"></button>
+  <button id="locateBtn" class="icon-btn locate" type="button" aria-label="現在地へ戻る">◎</button>
+
+  <nav class="bottombar">
+    <button id="filterBtn" class="pill-btn" type="button">表示条件</button>
+    <button id="cameraBtn" class="shutter" type="button" disabled aria-label="撮影">
+      <svg viewBox="0 0 88 88" class="shutter-ring" aria-hidden="true">
+        <circle cx="44" cy="44" r="40" class="sr-bg"/>
+        <circle cx="44" cy="44" r="40" class="sr-fg" id="shutterRing"/>
+      </svg>
+      <span class="shutter-core"></span>
+      <span id="shutterLabel" class="shutter-label">待機中</span>
+    </button>
+    <button id="listBtn" class="pill-btn" type="button">写真一覧 <span id="postCount" class="count">0</span></button>
+  </nav>
+  <span class="ver-corner ver"></span>
+</section>
+
+<!-- ========== ミッション発令 ========== -->
+<div id="missionBanner" class="overlay banner" hidden data-lock="1" role="dialog" aria-labelledby="bannerText">
+  <video id="missionVideo" class="bg-video" muted loop playsinline preload="none"></video>
+  <div class="banner-body">
+    <p class="banner-kicker">ミッション発令</p>
+    <h2 id="bannerText" class="banner-text"></h2>
+    <p id="bannerSub" class="banner-sub"></p>
+    <div class="banner-actions">
+      <button class="btn lemon big" id="bannerShoot" type="button">いますぐ撮る</button>
+      <button class="btn" id="bannerLater" type="button">地図を見る</button>
+    </div>
+  </div>
+  <p class="earth-credit" id="earthCredit" hidden>映像：Google Earth</p>
+</div>
+
+<!-- ========== 表示条件 ========== -->
+<div id="filterSheet" class="overlay" hidden>
+  <form id="filterForm" class="sheet">
+    <div class="sheet-head"><h2>表示条件</h2><button type="button" class="x" data-close aria-label="閉じる">×</button></div>
+    <div class="sheet-body">
+      <h3>いつの様子を見る？</h3>
+      <div class="seg">
+        <label><input type="radio" name="timeMode" value="live"><span>いま公開中の写真</span></label>
+        <label><input type="radio" name="timeMode" value="history"><span>少し前の足あと</span></label>
+      </div>
+      <label class="field" id="historyField">さかのぼる時間
+        <select name="historyMin">
+          <option value="30">30分前から</option>
+          <option value="60">1時間前から</option>
+          <option value="180">3時間前から</option>
+          <option value="360">6時間前から</option>
+          <option value="720">12時間前から</option>
+          <option value="1440">24時間前から</option>
+        </select>
+      </label>
+
+      <h3>どの距離を見る？</h3>
+      <div class="seg three">
+        <label><input type="radio" name="distanceMode" value="all"><span>すべて</span></label>
+        <label><input type="radio" name="distanceMode" value="near"><span>近くだけ</span></label>
+        <label><input type="radio" name="distanceMode" value="far"><span>遠くだけ</span></label>
+      </div>
+      <label class="field" id="nearField">自分から <output id="nearOut"></output> 以内
+        <input type="range" name="nearM" min="100" max="3000" step="100">
+      </label>
+      <label class="field" id="farField">自分から <output id="farOut"></output> 以上はなれた場所
+        <input type="range" name="farM" min="1000" max="100000" step="1000">
+      </label>
+
+      <label class="check"><input type="checkbox" name="share"><span>自分の現在地を共有する（約100mにぼかして表示）</span></label>
+      <button class="btn primary block" type="submit">この条件で表示</button>
+    </div>
+  </form>
+</div>
+
+<!-- ========== 写真の詳細 ========== -->
+<div id="postSheet" class="overlay" hidden>
+  <div class="sheet">
+    <div class="sheet-head"><h2>写真</h2><button type="button" class="x" data-close aria-label="閉じる">×</button></div>
+    <div class="sheet-body" id="postBody"></div>
+    <form id="commentForm" class="comment-form">
+      <textarea id="commentText" rows="1" maxlength="200" placeholder="コメントを書く"></textarea>
+      <button type="button" class="mic" data-mic="commentText" aria-label="音声で入力" aria-pressed="false">🎤</button>
+      <button type="submit" class="btn primary sm">送信</button>
+    </form>
+  </div>
+</div>
+
+<!-- ========== 写真一覧 ========== -->
+<div id="listSheet" class="overlay" hidden>
+  <div class="sheet">
+    <div class="sheet-head"><h2>いま見える写真</h2><button type="button" class="x" data-close aria-label="閉じる">×</button></div>
+    <div class="sheet-body" id="listBody"></div>
+  </div>
+</div>
+
+<!-- ========== メニュー ========== -->
+<div id="menuSheet" class="overlay" hidden>
+  <div class="sheet">
+    <div class="sheet-head"><h2 id="menuNick"></h2><button type="button" class="x" data-close aria-label="閉じる">×</button></div>
+    <div class="sheet-body">
+      <button class="btn block" id="changePwBtn" type="button">パスワードを変更</button>
+      <button class="btn block" type="button" data-open-tutorial>遊び方を見る</button>
+      <button class="btn block lemon" id="adminMissionBtn" type="button" hidden>いますぐミッションを出す（管理者）</button>
+      <h3>ブロック中のユーザー</h3>
+      <ul id="blockList" class="blist"></ul>
+      <button class="btn block danger" id="logoutBtn" type="button">ログアウト</button>
+      <p class="muted small center">まぼろしフォト <span class="ver"></span></p>
+    </div>
+  </div>
+</div>
+
+<!-- ========== カメラ ========== -->
+<div id="cameraModal" class="overlay cam" hidden data-lock="1" role="dialog" aria-label="撮影">
+  <div class="cam-box">
+    <div class="cam-top">
+      <p id="camMission" class="cam-mission"></p>
+      <span id="camLeft" class="cam-left"></span>
+      <button class="x" id="camClose" type="button" aria-label="閉じる">×</button>
+    </div>
+    <div class="cam-stage">
+      <video id="camVideo" playsinline muted data-step="live"></video>
+      <img id="camPreview" alt="撮影した写真" data-step="preview" hidden>
+      <div class="cam-fallback" data-step="fallback" hidden>
+        <p>カメラを起動できませんでした。<br>端末のカメラで撮影してください。</p>
+        <label class="btn lemon">カメラで撮る<input type="file" accept="image/*" capture="environment" id="camFile" hidden></label>
+      </div>
+    </div>
+    <div class="cam-controls" data-step="live"><button id="camShot" class="shutter-big" type="button" aria-label="シャッター"></button></div>
+    <div class="cam-controls col" data-step="preview" hidden>
+      <div class="comment-row">
+        <textarea id="camComment" maxlength="100" rows="2" placeholder="ひとこと（なくてもOK）"></textarea>
+        <button type="button" class="mic" data-mic="camComment" aria-label="音声で入力" aria-pressed="false">🎤</button>
+      </div>
+      <div class="row">
+        <button class="btn" id="camRetake" type="button">撮り直す</button>
+        <button class="btn lemon" id="camSend" type="button">投稿する</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ========== パスワード変更 ========== -->
+<div id="pwModal" class="overlay center" hidden>
+  <form id="pwForm" class="modal form">
+    <div class="modal-head"><h2 id="pwTitle">パスワードを変更</h2><button type="button" class="x" id="pwClose" data-close aria-label="閉じる">×</button></div>
+    <p id="pwNote" class="muted small"></p>
+    <label>いまのパスワード（仮パスワード）
+      <span class="pw-wrap"><input name="current" type="password" required autocomplete="current-password"><button type="button" class="eye" aria-label="パスワードを表示"></button></span>
+    </label>
+    <label>新しいパスワード（8文字以上・英字と数字を含む）
+      <span class="pw-wrap"><input name="next" type="password" required minlength="8" autocomplete="new-password"><button type="button" class="eye" aria-label="パスワードを表示"></button></span>
+    </label>
+    <label>新しいパスワード（確認）
+      <span class="pw-wrap"><input name="confirm" type="password" required minlength="8" autocomplete="new-password"><button type="button" class="eye" aria-label="パスワードを表示"></button></span>
+    </label>
+    <button class="btn primary block" type="submit">パスワードを変更する</button>
+  </form>
+</div>
+
+<!-- ========== 遊び方 ========== -->
+<div id="tutorialModal" class="overlay center" hidden>
+  <div class="modal tut">
+    <div class="modal-head"><h2>遊び方</h2><button type="button" class="x" data-close aria-label="閉じる">×</button></div>
+    <div id="tutBody" class="tut-body"></div>
+    <div class="tut-nav">
+      <button class="btn" id="tutPrev" type="button">もどる</button>
+      <div id="tutDots" class="dots" aria-hidden="true"></div>
+      <button class="btn primary" id="tutNext" type="button">つぎへ</button>
+    </div>
+  </div>
+</div>
+
+<!-- ========== 確認ダイアログ ========== -->
+<div id="askModal" class="overlay center" hidden data-lock="1">
+  <div class="modal">
+    <h2 id="askTitle" class="ask-title"></h2>
+    <p id="askMsg" class="muted small"></p>
+    <div id="askOptions" class="ask-options"></div>
+  </div>
+</div>
+
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="js/config.js"></script>
+<script src="js/api.js"></script>
+<script src="js/voice.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
