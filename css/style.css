@@ -1,4 +1,4 @@
-/* まぼろしフォト style.css v1.0.0
+/* まぼろしフォト style.css v1.1.0
    テーマ：ソーダ水とステッカー。太い紺の輪郭線＋ずらした影で「貼ったシール」のような手触り。
    主役は写真ピンのまわりで減っていく赤い輪（消えるまでの残り時間）。 */
 
@@ -147,6 +147,78 @@ input[type=range] { width: 100%; accent-color: var(--cherry); }
   border: 2px solid var(--ink); border-radius: 999px; background: var(--paper);
   padding: 3px 12px; font-size: 12px; font-weight: 800;
 }
+/* 気配メーターが出ている間は、表示条件のピルをその下へ */
+.omen:not([hidden]) ~ .filter-pill { top: calc(162px + var(--safe-t)); }
+
+/* ---------- 気配メーター ---------- */
+.omen {
+  --lv: var(--mint);
+  position: absolute; z-index: 500; left: 10px; top: calc(64px + var(--safe-t));
+  width: min(330px, calc(100% - 20px));
+  display: grid; gap: 6px; text-align: left;
+  background: var(--paper); border: var(--line); border-radius: 18px;
+  box-shadow: 3px 3px 0 var(--ink); padding: 8px 12px 9px;
+}
+.omen[data-level="1"] { --lv: var(--soda); }
+.omen[data-level="2"] { --lv: var(--lemon); }
+.omen[data-level="3"] { --lv: #FF9F1C; }
+.omen[data-level="4"] { --lv: var(--cherry); animation: shake .5s ease-in-out infinite; }
+.omen-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.omen-level {
+  font-family: var(--display); font-size: 19px; line-height: 1.1;
+  color: var(--ink); background: var(--lv); border: 2px solid var(--ink); border-radius: 10px; padding: 2px 8px;
+}
+.omen-range { font-weight: 800; font-size: 13px; font-variant-numeric: tabular-nums; }
+.omen-meter {
+  position: relative; display: block; height: 14px; overflow: hidden;
+  border: 2px solid var(--ink); border-radius: 999px; background: #fff;
+}
+.omen-fill {
+  position: absolute; inset: 0 auto 0 0; width: 0;
+  background: repeating-linear-gradient(-45deg, var(--lv) 0 8px, color-mix(in srgb, var(--lv) 70%, #fff) 8px 16px);
+  border-right: 2px solid var(--ink); transition: width .9s cubic-bezier(.3, 1.4, .5, 1);
+  animation: stripes 1.2s linear infinite;
+}
+.omen-meter i { position: absolute; top: 0; bottom: 0; width: 2px; background: rgba(37, 32, 94, .25); }
+.omen-meter i:nth-of-type(1) { left: 25%; } .omen-meter i:nth-of-type(2) { left: 50%; }
+.omen-meter i:nth-of-type(3) { left: 70%; } .omen-meter i:nth-of-type(4) { left: 88%; }
+.omen-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.omen-line { font-size: 13px; font-weight: 700; line-height: 1.35; min-height: 1.35em; }
+.omen-line.swap { animation: linein .35s ease-out; }
+.omen-bet {
+  flex: none; font-size: 12px; font-weight: 800; white-space: nowrap;
+  background: var(--lemon); border: 2px solid var(--ink); border-radius: 999px; padding: 1px 10px;
+}
+.omen-bet.placed { background: var(--ink); color: var(--paper); }
+
+/* ---------- 予想ゲーム ---------- */
+.predict-now { margin: 0; font-weight: 800; background: #fff; border: var(--line); border-radius: 14px; padding: 10px 12px; }
+.bets { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.bet {
+  display: grid; gap: 0; text-align: center; padding: 12px 6px;
+  background: #fff; border: var(--line); border-radius: 14px; box-shadow: 3px 3px 0 var(--ink);
+}
+.bet b { font-size: 17px; }
+.bet small { font-size: 12px; color: var(--ink-60); font-weight: 700; }
+.bet[aria-pressed="true"] { background: var(--lemon); }
+.bet:active { transform: translate(3px, 3px); box-shadow: none; }
+.bet-status { margin: 0; font-weight: 700; font-size: 14px; }
+.score { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.score div { display: grid; text-align: center; background: var(--soda); border: 2px solid var(--ink); border-radius: 12px; padding: 6px 2px; }
+.score b { font-family: var(--display); font-weight: 400; font-size: 24px; line-height: 1.2; }
+.score span { font-size: 11px; font-weight: 800; }
+.recent { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.recent li { display: flex; justify-content: space-between; gap: 8px; background: #fff; border: 2px solid var(--ink); border-radius: 12px; padding: 6px 10px; font-weight: 700; font-size: 14px; }
+.recent li small { color: var(--ink-60); flex: none; }
+
+/* 的中演出 */
+.hitburst {
+  position: fixed; z-index: 3500; left: 50%; top: 38%; transform: translate(-50%, -50%) rotate(-4deg);
+  font-family: var(--display); font-size: clamp(34px, 10vw, 56px); color: var(--lemon);
+  -webkit-text-stroke: 2.5px var(--ink); paint-order: stroke fill; text-shadow: 5px 5px 0 var(--ink);
+  pointer-events: none; animation: hitburst 1.8s ease-out forwards; white-space: nowrap;
+}
+
 .locate { position: absolute; z-index: 500; right: 10px; bottom: calc(118px + var(--safe-b)); }
 
 .bottombar {
@@ -341,6 +413,10 @@ output { font-weight: 800; color: var(--cherry); }
 @keyframes throb { 50% { transform: scale(1.035); } }
 @keyframes popin { from { transform: scale(.2); opacity: 0; } to { transform: scale(1); opacity: 1; } }
 @keyframes poof { to { transform: scale(1.5); opacity: 0; filter: blur(4px); } }
+@keyframes shake { 25% { transform: translateX(-2px) rotate(-.6deg); } 75% { transform: translateX(2px) rotate(.6deg); } }
+@keyframes stripes { to { background-position: 22.6px 0; } }
+@keyframes linein { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes hitburst { 0% { opacity: 0; transform: translate(-50%, -50%) scale(.3) rotate(-4deg); } 15% { opacity: 1; transform: translate(-50%, -50%) scale(1.15) rotate(-4deg); } 30% { transform: translate(-50%, -50%) scale(1) rotate(-4deg); } 80% { opacity: 1; } 100% { opacity: 0; transform: translate(-50%, -60%) scale(1) rotate(-4deg); } }
 @keyframes ping { 0% { box-shadow: 0 0 0 2.5px var(--ink), 0 0 0 0 rgba(34, 184, 238, .55); } 100% { box-shadow: 0 0 0 2.5px var(--ink), 0 0 0 18px rgba(34, 184, 238, 0); } }
 
 @media (prefers-reduced-motion: reduce) {

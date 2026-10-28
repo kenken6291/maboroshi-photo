@@ -78,6 +78,18 @@
     </div>
   </header>
 
+  <button id="omen" class="omen" type="button" hidden data-level="0" aria-describedby="omenLine">
+    <span class="omen-head">
+      <span class="omen-level" id="omenLevel">しずか</span>
+      <span class="omen-range" id="omenRange"></span>
+    </span>
+    <span class="omen-meter" aria-hidden="true"><span class="omen-fill" id="omenFill"></span><i></i><i></i><i></i><i></i></span>
+    <span class="omen-foot">
+      <span class="omen-line" id="omenLine"></span>
+      <span class="omen-bet" id="omenBet">予想する</span>
+    </span>
+  </button>
+
   <button id="filterSummary" class="filter-pill" type="button"></button>
   <button id="locateBtn" class="icon-btn locate" type="button" aria-label="現在地へ戻る">◎</button>
 
@@ -149,6 +161,31 @@
       <button class="btn primary block" type="submit">この条件で表示</button>
     </div>
   </form>
+</div>
+
+<!-- ========== 予想ゲーム ========== -->
+<div id="predictSheet" class="overlay" hidden>
+  <div class="sheet">
+    <div class="sheet-head"><h2>次のミッションはいつ？</h2><button type="button" class="x" data-close aria-label="閉じる">×</button></div>
+    <div class="sheet-body">
+      <p class="predict-now" id="predictNow"></p>
+      <div class="bets" id="betOptions">
+        <button type="button" class="bet" data-bet="5"><b>5分以内</b><small>せっかち派</small></button>
+        <button type="button" class="bet" data-bet="15"><b>15分以内</b><small>読み上手</small></button>
+        <button type="button" class="bet" data-bet="30"><b>30分以内</b><small>のんびり派</small></button>
+        <button type="button" class="bet" data-bet="99"><b>もっと先</b><small>大穴ねらい</small></button>
+      </div>
+      <p class="bet-status" id="betStatus"></p>
+      <div class="score">
+        <div><b id="scHit">0</b><span>的中</span></div>
+        <div><b id="scTry">0</b><span>予想した回数</span></div>
+        <div><b id="scStreak">0</b><span>連続的中</span></div>
+        <div><b id="scBest">0</b><span>最高連続</span></div>
+      </div>
+      <h3>今日のミッション <span id="todayCount"></span></h3>
+      <ul id="recentList" class="recent"></ul>
+    </div>
+  </div>
 </div>
 
 <!-- ========== 写真の詳細 ========== -->

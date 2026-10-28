@@ -1,4 +1,4 @@
-/* まぼろしフォト app.js v1.0.0 */
+/* まぼろしフォト app.js v1.1.0 */
 (() => {
   'use strict';
   const CFG = window.APP_CONFIG;
@@ -20,7 +20,11 @@
     map: null, layers: {}, markers: new Map(), meMarker: null,
     timers: {}, geoId: null, stream: null, shot: null, mic: null,
     current: null, comments: [], tutIndex: 0,
-    announced: new Set(safeJSON(localStorage.getItem(KEY + '_announced'), []))
+    announced: new Set(safeJSON(localStorage.getItem(KEY + '_announced'), [])),
+    // 気配メーター・予想ゲーム
+    hint: null, notifiedLevel: -1, omenShown: -1, omenLineAt: 0,
+    bet: safeJSON(localStorage.getItem(KEY + '_bet'), null),
+    score: Object.assign({ hit: 0, tries: 0, streak: 0, best: 0 }, safeJSON(localStorage.getItem(KEY + '_score'), {}))
   };
   const now = () => Date.now() + S.clockOffset;
   const saveSettings = () => localStorage.setItem(KEY + '_settings', JSON.stringify(S.settings));
@@ -424,10 +428,16 @@
       S.clockOffset = r.serverNow - Date.now();
       const m = r.mission;
       S.mission = m;
+      if (r.hint) onHint(r.hint);
+      const result = resolveBet(m.openAt || (r.hint && r.hint.lastAt));
       if (m.status === 'open' && !S.announced.has(m.missionId)) {
         S.announced.add(m.missionId);
         localStorage.setItem(KEY + '_announced', JSON.stringify(Array.from(S.announced).slice(-30)));
-        if (!m.posted) announce(m);
+        S.notifiedLevel = 2;
+        if (!m.posted) announce(m, result);
+        else if (result) showBetResult(result);
+      } else if (result) {
+        showBetResult(result);
       }
       if (m.status === 'showing' && !S.lastShowing) refreshMap();
       S.lastShowing = m.status === 'showing' ? m.missionId : null;
@@ -435,9 +445,11 @@
     } catch (e) { console.warn(e); }
   }
 
-  function announce(m) {
+  function announce(m, result) {
     $('#bannerText').textContent = m.text;
-    $('#bannerSub').textContent = `撮影できるのは ${fmtTime(m.closeAt)} まで。写真は ${fmtTime(m.revealAt)} にいっせいに地図へ現れ、${m.displayMin}分後に消えます。`;
+    const head = result ? (result.hit ? `予想的中！ ` : `予想は「${BET_LABEL[result.bucket]}」ではずれ。`) : '';
+    $('#bannerSub').textContent = `${head}撮影できるのは ${fmtTime(m.closeAt)} まで。写真は ${fmtTime(m.revealAt)} にいっせいに地図へ現れ、${m.displayMin}分後に消えます。`;
+    if (result && result.hit) hitBurst('予想的中！');
     setupVideo($('#missionVideo'), CFG.EARTH && CFG.EARTH.missionVideo);
     openSheet('missionBanner');
     $('#missionVideo').play().catch(() => {});
@@ -475,7 +487,127 @@
       $('#shutterLabel').textContent = '待機中';
       ring.style.strokeDashoffset = SHUT_C;
     }
+    renderOmen();
     updatePostRemain();
+  }
+
+  /* ========== 気配メーター＆予想ゲーム ========== */
+  const LEVELS = [
+    { name: 'しずか', min: 0, lines: ['AIはお昼寝中…', 'まだ風はやんでいる', '今のうちに散歩でもどうぞ', 'カメラのレンズをふいておこう', 'AIは別のことを考えているらしい'] },
+    { name: 'そわそわ', min: 25, lines: ['AIがあくびをした', '遠くで何かが動いた気がする', 'お題を考えはじめたらしい', 'AIがメモ帳をひらいた'] },
+    { name: 'ざわざわ', min: 50, lines: ['空気がざわついてきた', 'AIがペンを持った', 'カメラの準備はいい？', '何色のお題が来るだろう'] },
+    { name: 'どきどき', min: 70, lines: ['AIがお題を決めたっぽい', 'そろそろかもしれない', '画面から目を離さないで', '指をシャッターの近くに'] },
+    { name: 'もうすぐ!?', min: 88, lines: ['もう来る…！', '3、2、1…いや、まだかも', 'AIが息を吸いこんだ', '空を見上げて待とう'] }
+  ];
+  const BET_LABEL = { 5: '5分以内', 15: '15分以内', 30: '30分以内', 99: 'もっと先' };
+  const levelOf = (heat) => LEVELS.reduce((idx, l, k) => (heat >= l.min ? k : idx), 0);
+
+  /** サーバーからの気配を受け取り、段階が上がったら知らせる（ゆらぎで何度も鳴らないよう、上がった時だけ） */
+  function onHint(h) {
+    const lv = levelOf(h.heat);
+    S.hint = h;
+    if (S.notifiedLevel < 0) { S.notifiedLevel = Math.max(2, lv); return; }
+    if (lv > S.notifiedLevel && lv >= 3) {
+      S.notifiedLevel = lv;
+      toast(`気配が「${LEVELS[lv].name}」になった！`);
+      if (navigator.vibrate) navigator.vibrate(lv === 4 ? [60, 40, 60] : 40);
+      Speaker.speak(lv === 4 ? 'もうすぐ来るかも！' : 'ざわざわしてきた。カメラの準備をしておこう');
+    }
+  }
+
+  function renderOmen() {
+    const box = $('#omen'), h = S.hint, m = S.mission;
+    if (!h || !S.user || (m && m.status === 'open')) { box.hidden = true; return; }
+    box.hidden = false;
+    const lv = levelOf(h.heat);
+    const calm = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const wobble = calm ? 0 : (Math.random() * 6 - 3) * (lv >= 3 ? 1.7 : 1);
+    $('#omenFill').style.width = `${Math.max(3, Math.min(100, h.heat + wobble))}%`;
+    box.dataset.level = String(lv);
+    $('#omenLevel').textContent = LEVELS[lv].name;
+    $('#omenRange').textContent = h.rangeText;
+    if (lv !== S.omenShown || Date.now() - S.omenLineAt > 7000) {
+      S.omenShown = lv;
+      S.omenLineAt = Date.now();
+      const el = $('#omenLine'), lines = LEVELS[lv].lines;
+      el.textContent = lines[Math.floor(Math.random() * lines.length)];
+      el.classList.remove('swap'); void el.offsetWidth; el.classList.add('swap');
+    }
+    const bet = $('#omenBet');
+    bet.textContent = S.bet ? `予想：${BET_LABEL[S.bet.bucket]}` : '予想する';
+    bet.classList.toggle('placed', !!S.bet);
+  }
+
+  /** 予想の答え合わせ：予想した時刻から、実際に発令されるまでの分数で判定 */
+  function resolveBet(openAt) {
+    const b = S.bet;
+    if (!b || !openAt || openAt <= b.madeAt) return null;
+    const mins = (openAt - b.madeAt) / 60000;
+    const actual = mins <= 5 ? '5' : mins <= 15 ? '15' : mins <= 30 ? '30' : '99';
+    const hit = actual === String(b.bucket);
+    const sc = S.score;
+    sc.tries++;
+    if (hit) { sc.hit++; sc.streak++; sc.best = Math.max(sc.best, sc.streak); } else sc.streak = 0;
+    localStorage.setItem(KEY + '_score', JSON.stringify(sc));
+    S.bet = null;
+    localStorage.removeItem(KEY + '_bet');
+    return { hit, mins: Math.max(0, Math.round(mins)), bucket: b.bucket, streak: sc.streak };
+  }
+
+  function showBetResult(r) {
+    if (r.hit) {
+      hitBurst(r.streak >= 2 ? `${r.streak}連続的中！` : '予想的中！');
+      toast(`予想的中！ ${r.mins}分後にミッションが来ました`);
+      Speaker.speak(r.streak >= 2 ? `${r.streak}連続的中！すごい！` : '予想的中！');
+    } else {
+      toast(`予想ははずれ。ミッションは${r.mins}分後に来ました`);
+    }
+  }
+
+  function hitBurst(text) {
+    const el = document.createElement('div');
+    el.className = 'hitburst';
+    el.textContent = text;
+    document.body.appendChild(el);
+    if (navigator.vibrate) navigator.vibrate([40, 30, 40, 30, 120]);
+    setTimeout(() => el.remove(), 1900);
+  }
+
+  function renderPredict() {
+    const h = S.hint, m = S.mission;
+    const lv = h ? levelOf(h.heat) : 0;
+    const closed = !!h && lv >= 4 && !(m && m.status === 'open');
+    if (m && m.status === 'open') $('#predictNow').textContent = 'いまミッション中！ 予想すると、その次のミッションで答え合わせします。';
+    else if (h) {
+      const since = h.lastAt ? `前回のミッションから${Math.max(1, Math.round((now() - h.lastAt) / 60000))}分。` : '';
+      $('#predictNow').textContent = `いまの気配は「${LEVELS[lv].name}」。${h.rangeText}。${since}`;
+    } else $('#predictNow').textContent = '気配を読みこみ中…';
+
+    $$('#betOptions .bet').forEach((b) => {
+      b.setAttribute('aria-pressed', String(!!S.bet && String(S.bet.bucket) === b.dataset.bet));
+      b.disabled = closed;
+    });
+    $('#betStatus').textContent = closed
+      ? '「もうすぐ!?」の間は予想を受け付けません。次のミッションでどうぞ。'
+      : S.bet
+        ? `「${BET_LABEL[S.bet.bucket]}」で予想中（${fmtTime(S.bet.madeAt)}から数えます）。変えると、その時点から数え直します。`
+        : '予想した時刻から、ミッションが来るまでの時間で答え合わせします。';
+    $('#scHit').textContent = S.score.hit;
+    $('#scTry').textContent = S.score.tries;
+    $('#scStreak').textContent = S.score.streak;
+    $('#scBest').textContent = S.score.best;
+    $('#todayCount').textContent = h ? `${h.todayCount}回` : '';
+    $('#recentList').innerHTML = h && h.recent.length
+      ? h.recent.map((x) => `<li><span>${esc(x.text)}</span><small>${fmtTime(x.at)}</small></li>`).join('')
+      : '<li class="muted">今日はまだミッションが来ていません</li>';
+  }
+
+  function placeBet(bucket) {
+    S.bet = { bucket: String(bucket), madeAt: now() };
+    localStorage.setItem(KEY + '_bet', JSON.stringify(S.bet));
+    toast(`「${BET_LABEL[bucket]}」で予想しました`);
+    renderPredict();
+    renderOmen();
   }
 
   function startLoops() {
@@ -896,6 +1028,7 @@
   /* ========== 遊び方 ========== */
   const TUT = [
     { art: '📡', title: 'ミッションは突然くる', text: 'AIがときどき「青いものを撮って」のようなお題を出します。画面の上が赤く光ったら合図です。' },
+    { art: '🌡️', title: '気配を読んで、予想しよう', text: '気配メーターが「しずか」から「もうすぐ!?」まで上がっていきます。タップして「何分後に来るか」を予想し、連続的中をねらおう。' },
     { art: '📷', title: '撮れるのはミッション中だけ', text: '下の丸いボタンで撮影します。ひとことを添えて投稿すると、撮った場所に写真のピンが立ちます。' },
     { art: '⏳', title: 'みんなの写真がいっせいに出て、消える', text: 'ミッションが終わると全員の写真が同時に地図へ。ピンのまわりの赤い輪がなくなると消えます。' },
     { art: '🧭', title: '近く・遠く・少し前を探検', text: '「表示条件」で、近くだけ・遠くだけ・少し前の足あとを切り替えられます。' },
@@ -947,6 +1080,11 @@
       else if (m && m.status === 'showing') { renderList(); openSheet('listSheet'); }
       else toast('ミッションはいつ来るか分かりません。地図を開いたまま探検してみてください');
     };
+    $('#omen').onclick = () => { renderPredict(); openSheet('predictSheet'); };
+    $('#betOptions').addEventListener('click', (e) => {
+      const b = e.target.closest('[data-bet]');
+      if (b && !b.disabled) placeBet(b.dataset.bet);
+    });
     $('#bannerShoot').onclick = () => { closeSheet('missionBanner'); openCamera(); };
     $('#bannerLater').onclick = () => closeSheet('missionBanner');
     $('#camShot').onclick = captureFrame;

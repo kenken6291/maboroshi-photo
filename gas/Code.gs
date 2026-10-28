@@ -1,5 +1,5 @@
 /**
- * まぼろしフォト（maboroshi-photo）GAS バックエンド  v1.0.0
+ * まぼろしフォト（maboroshi-photo）GAS バックエンド  v1.1.0
  * 位置連動型リアルタイムAIフォトシェア
  *
  * ■ スクリプトプロパティ（setup() 実行後に「プロジェクトの設定」から設定）
@@ -22,7 +22,7 @@
  * ■ コードを変更したら「デプロイを管理」→ 編集 → バージョン「新バージョン」で再デプロイ
  */
 
-const VERSION = 'v1.0.0';
+const VERSION = 'v1.1.0';
 const PROPS = PropertiesService.getScriptProperties();
 function prop(k, d) { const v = PROPS.getProperty(k); return (v === null || v === '') ? d : v; }
 function numProp(k, d) { const n = Number(prop(k, String(d))); return isFinite(n) ? n : d; }
@@ -126,7 +126,8 @@ function cleanup() {
     const rKeep = rs.filter(function (r) { return Number(r.createdAt) >= now - 30 * 86400000; });
     if (rKeep.length !== rs.length) rewrite('Reports', rKeep);
   });
-  ensureSlotMission(now);
+  ensureSlotMission(now, 0);
+  ensureSlotMission(now, 1);
 }
 
 /* ========== シート操作 ========== */
@@ -444,10 +445,10 @@ function generateMission() {
 }
 
 /** 時間枠ごとのミッションを用意（出るか・いつ出るかは枠ごとに決定、事前には非公開） */
-function ensureSlotMission(now) {
+function ensureSlotMission(now, offset) {
   const slotMs = numProp('MISSION_INTERVAL_MIN', 30) * 60000;
   const winMs = numProp('MISSION_WINDOW_MIN', 5) * 60000;
-  const slotStart = Math.floor(now / slotMs) * slotMs;
+  const slotStart = (Math.floor(now / slotMs) + (offset || 0)) * slotMs;
   const find = function () { return readAll('Missions').find(function (r) { return Number(r.slotStart) === slotStart; }); };
   const found = find();
   if (found) return found;
@@ -474,7 +475,8 @@ function ensureSlotMission(now) {
 
 function getMission(req) {
   const me = auth(req), now = Date.now();
-  ensureSlotMission(now);
+  ensureSlotMission(now, 0);
+  ensureSlotMission(now, 1); // 次の枠も先に決めておく（気配メーター用）
   const rows = readAll('Missions').filter(function (r) { return Number(r.openAt) > 0; });
   const open = rows.filter(function (r) { return Number(r.openAt) <= now && now < Number(r.closeAt); })
     .sort(function (a, b) { return b.openAt - a.openAt; })[0];
@@ -486,13 +488,59 @@ function getMission(req) {
       displayMin: Number(open.displayMin), posted: posted
     } };
   }
+  const hint = missionHint(rows, now);
   const showing = rows.filter(function (r) { return Number(r.revealAt) <= now && now < Number(r.revealAt) + Number(r.displayMin) * 60000; })
     .sort(function (a, b) { return b.revealAt - a.revealAt; })[0];
   if (showing) {
-    return { mission: { status: 'showing', missionId: showing.missionId, text: showing.text,
-      revealAt: Number(showing.revealAt), expireAt: Number(showing.revealAt) + Number(showing.displayMin) * 60000 } };
+    return { hint: hint, mission: { status: 'showing', missionId: showing.missionId, text: showing.text,
+      openAt: Number(showing.openAt), revealAt: Number(showing.revealAt),
+      expireAt: Number(showing.revealAt) + Number(showing.displayMin) * 60000 } };
   }
-  return { mission: { status: 'waiting' } };
+  return { hint: hint, mission: { status: 'waiting' } };
+}
+
+/**
+ * 待ち時間の「気配」：正確な発令時刻は明かさず、
+ *  heat      … 0〜100の気配（近づくほど上がる＋毎回ゆらぐ）
+ *  rangeText … 「6〜14分後かも」のような幅のある予報（近づくほど幅が狭まる）
+ *  todayCount / recent / lastAt … 今日の回数・最近のお題・前回の発令時刻
+ */
+function missionHint(rows, now) {
+  const slotMin = numProp('MISSION_INTERVAL_MIN', 30);
+  const today = jstNow('yyyyMMdd');
+  const past = rows.filter(function (r) { return Number(r.openAt) <= now; })
+    .sort(function (a, b) { return b.openAt - a.openAt; });
+  const base = {
+    todayCount: past.filter(function (r) { return Utilities.formatDate(new Date(Number(r.openAt)), 'Asia/Tokyo', 'yyyyMMdd') === today; }).length,
+    recent: past.slice(0, 3).map(function (r) { return { text: r.text, at: Number(r.openAt) }; }),
+    lastAt: past.length ? Number(past[0].openAt) : 0
+  };
+  const next = rows.filter(function (r) { return Number(r.openAt) > now; })
+    .sort(function (a, b) { return a.openAt - b.openAt; })[0];
+
+  if (!next) {
+    const slotMs = slotMin * 60000;
+    const resumeAt = (Math.floor(now / slotMs) + 2) * slotMs;
+    return Object.assign(base, {
+      heat: 4 + Math.floor(Math.random() * 9),
+      rangeText: Utilities.formatDate(new Date(resumeAt), 'Asia/Tokyo', 'H:mm') + 'までは静かそう'
+    });
+  }
+
+  const minLeft = (Number(next.openAt) - now) / 60000;
+  let heat = 100 * (1 - minLeft / (slotMin * 2)) + (Math.random() * 16 - 8);
+  heat = Math.round(Math.max(8, Math.min(96, heat)));
+
+  // ミッションごとに固定のずれを入れて、幅の真ん中＝正解にならないようにする
+  const seed = (Number(next.openAt) % 9973) / 9973;
+  const shift = (seed - 0.5) * minLeft * 0.5;
+  const lo = Math.max(0, Math.floor(minLeft * 0.6 + shift));
+  let hi = Math.ceil(minLeft * 1.4 + shift) + 1;
+  if (hi <= lo + 1) hi = lo + 2;
+  return Object.assign(base, {
+    heat: heat,
+    rangeText: lo <= 1 ? hi + '分以内に来るかも' : lo + '〜' + hi + '分後かも'
+  });
 }
 
 /** 管理者：いますぐミッションを発令（Usersシートの role を admin にしたユーザーのみ） */
