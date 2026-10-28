@@ -1,4 +1,4 @@
-/* まぼろしフォト app.js v1.4.1 */
+/* まぼろしフォト app.js v1.4.2 */
 (() => {
   'use strict';
   const CFG = window.APP_CONFIG;
@@ -1106,7 +1106,15 @@
       </aside>
       <section class="np-column"><h3>${esc(a.columnTitle || 'AIの独り言')}</h3><p>${esc(a.column)}</p></section>
       <button type="button" class="btn sm read-btn" data-speak>見出しを読み上げる</button>
+      ${paperEndHtml()}
     </article>`;
+  }
+
+  function paperEndHtml() {
+    return `<div class="paper-end">
+      <button type="button" class="btn" data-back>一覧へもどる</button>
+      <button type="button" class="btn primary" data-close>新聞を閉じる</button>
+    </div>`;
   }
 
   function magazineHtml(a) {
@@ -1126,6 +1134,7 @@
         <div class="mg-body">${paras(a.body)}</div>
         <section class="mg-after"><h3>${esc(a.columnTitle || '編集後記')}</h3><p>${esc(a.column)}</p></section>
         <button type="button" class="btn sm read-btn" data-speak>見出しを読み上げる</button>
+        ${paperEndHtml()}
       </div>
     </article>`;
   }
@@ -1309,6 +1318,7 @@
     $('#paperBody').addEventListener('click', (e) => {
       const a = e.target.closest('[data-aid]');
       if (a) return openArticle(a.dataset.aid);
+      if (e.target.closest('[data-back]')) { $('#paperBack').hidden = true; renderPaperIndex(); $('#paperBody').scrollTop = 0; return; }
       const more = e.target.closest('[data-more]');
       if (more) return loadMorePaper(more);
       if (e.target.closest('[data-speak]') && S.article) {
