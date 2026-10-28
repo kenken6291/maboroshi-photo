@@ -1,4 +1,4 @@
-/* まぼろしフォト app.js v1.4.0 */
+/* まぼろしフォト app.js v1.4.1 */
 (() => {
   'use strict';
   const CFG = window.APP_CONFIG;
@@ -209,7 +209,20 @@
     setupVideo($('#authVideo'), CFG.EARTH && CFG.EARTH.authVideo);
   }
 
+  /** ぼかし設定はサーバーを正とする（別の端末で変えた設定も反映）。未保存ならこの端末の設定を保存 */
+  function syncShareFuzz() {
+    const server = S.user && S.user.shareFuzz;
+    if (server) {
+      if (server !== S.settings.shareFuzz) { S.settings.shareFuzz = server; saveSettings(); drawRange(); updateFilterSummary(); }
+    } else {
+      API.call('saveSettings', { shareFuzz: S.settings.shareFuzz || 3 })
+        .then((r) => { S.user.shareFuzz = r.shareFuzz; Session.update({ user: S.user }); })
+        .catch((e) => console.warn(e));
+    }
+  }
+
   function enterApp() {
+    syncShareFuzz();
     $('#authScreen').hidden = true;
     $('#mainScreen').hidden = false;
     if (!S.map) initMap();
@@ -1192,6 +1205,11 @@
       share: f.share.checked, shareFuzz: Number(f.shareFuzz.value) || 3
     });
     saveSettings();
+    if (S.user && S.user.shareFuzz !== S.settings.shareFuzz) {
+      API.call('saveSettings', { shareFuzz: S.settings.shareFuzz })
+        .then((r) => { S.user.shareFuzz = r.shareFuzz; Session.update({ user: S.user }); refreshMap(); })
+        .catch((err) => toast(err.message, 'error'));
+    }
     drawRange();
     updateFilterSummary();
     closeSheet('filterSheet');

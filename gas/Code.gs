@@ -1,5 +1,5 @@
 /**
- * まぼろしフォト（maboroshi-photo）GAS バックエンド  v1.4.0
+ * まぼろしフォト（maboroshi-photo）GAS バックエンド  v1.4.1
  * 位置連動型リアルタイムAIフォトシェア
  *
  * ■ スクリプトプロパティ（setup() 実行後に「プロジェクトの設定」から設定）
@@ -26,13 +26,13 @@
  * ■ コードを変更したら「デプロイを管理」→ 編集 → バージョン「新バージョン」で再デプロイ
  */
 
-const VERSION = 'v1.4.0';
+const VERSION = 'v1.4.1';
 const PROPS = PropertiesService.getScriptProperties();
 function prop(k, d) { const v = PROPS.getProperty(k); return (v === null || v === '') ? d : v; }
 function numProp(k, d) { const n = Number(prop(k, String(d))); return isFinite(n) ? n : d; }
 
 const SHEETS = {
-  Users:     ['userId', 'email', 'nickname', 'hash', 'salt', 'mustChange', 'failCount', 'lockedUntil', 'role', 'agreedAt', 'createdAt', 'status'],
+  Users:     ['userId', 'email', 'nickname', 'hash', 'salt', 'mustChange', 'failCount', 'lockedUntil', 'role', 'agreedAt', 'createdAt', 'status', 'shareFuzz'],
   Posts:     ['postId', 'userId', 'nickname', 'lat', 'lng', 'fileId', 'comment', 'missionId', 'missionText', 'createdAt', 'revealAt', 'expireAt', 'status', 'reportCount', 'fuzz'],
   Comments:  ['commentId', 'postId', 'userId', 'nickname', 'text', 'createdAt', 'updatedAt', 'status', 'reportCount'],
   Likes:     ['postId', 'userId', 'createdAt'],
@@ -45,7 +45,7 @@ const SHEETS = {
 
 const ROUTES = {
   register: register, login: login, me: me, logout: logout,
-  changePassword: changePassword, resetPassword: resetPassword, changeNickname: changeNickname,
+  changePassword: changePassword, resetPassword: resetPassword, changeNickname: changeNickname, saveSettings: saveSettings,
   getMission: getMission, adminMission: adminMission,
   uploadPhoto: uploadPhoto, listMap: listMap, updateLocation: updateLocation,
   getPost: getPost, editPost: editPost, deletePost: deletePost,
@@ -208,6 +208,44 @@ function haversine(lat1, lng1, lat2, lng2) {
 /** 現在地のぼかし段階（小数点以下の桁数）3≒約100m / 2≒約1km / 1≒約10km */
 const FUZZ_METERS = { 3: 100, 2: 1000, 1: 10000 };
 function locFuzz(v) { const n = Number(v); return n === 1 || n === 2 || n === 3 ? n : 3; }
+function validFuzz(v) { const n = Number(v); return v !== '' && v !== null && v !== undefined && (n === 1 || n === 2 || n === 3) ? n : 0; }
+
+/*
+ * ぼかし設定はサーバー（Users.shareFuzz）を正とする。
+ * 表示するときは「記録時のぼかし」と「本人のいまの設定」のうち、ぼかしが大きいほう（桁数が小さいほう）を使う。
+ * → 設定を強めると、すでに地図に出ている写真・足あとにもすぐ反映される。
+ */
+function userPrefMap() {
+  const map = {};
+  readAll('Users').forEach(function (u) { const f = validFuzz(u.shareFuzz); if (f) map[u.userId] = f; });
+  return map;
+}
+function getUserFuzz(uid) {
+  const c = CacheService.getScriptCache();
+  const hit = c.get('pref_' + uid);
+  if (hit) return Number(hit);
+  const u = readAll('Users').find(function (x) { return x.userId === uid; });
+  const f = u ? (validFuzz(u.shareFuzz) || 3) : 3;
+  c.put('pref_' + uid, String(f), 21600);
+  return f;
+}
+function setUserFuzz(uid, f) {
+  withLock(function () {
+    const u = readAll('Users').find(function (x) { return x.userId === uid; });
+    if (u && validFuzz(u.shareFuzz) !== f) { u.shareFuzz = f; update('Users', u); }
+  });
+  CacheService.getScriptCache().put('pref_' + uid, String(f), 21600);
+}
+/** 送られてきた設定があれば保存し、実際に使うぼかしを返す */
+function resolveFuzz(uid, reqFuzz) {
+  const f = validFuzz(reqFuzz);
+  if (f && f !== getUserFuzz(uid)) setUserFuzz(uid, f);
+  return f || getUserFuzz(uid);
+}
+function effDec(stored, pref, fallback) {
+  const base = validFuzz(stored) || fallback;
+  return pref ? Math.min(base, pref) : base;
+}
 
 function fuzz(v, decimals) {
   const f = Math.pow(10, decimals === undefined ? numProp('POST_FUZZ_DECIMALS', 3) : decimals);
@@ -256,7 +294,8 @@ function auth(req) {
   return s;
 }
 function pubUser(u) {
-  return { userId: u.userId, nickname: u.nickname, role: u.role || 'member', mustChange: truthy(u.mustChange) };
+  return { userId: u.userId, nickname: u.nickname, role: u.role || 'member', mustChange: truthy(u.mustChange),
+    shareFuzz: validFuzz(u.shareFuzz) || null };
 }
 
 function register(req) {
@@ -371,6 +410,15 @@ function changeNickname(req) {
   c.put('nick_' + me.userId, nickname, 21600);
   c.put('nickchg_' + me.userId, '1', 600);
   return { user: pubUser(user), message: 'ニックネームを「' + nickname + '」に変更しました' };
+}
+
+/** 表示条件の保存（現在地・写真のぼかし） */
+function saveSettings(req) {
+  const me = auth(req);
+  const f = validFuzz(req.shareFuzz);
+  if (!f) fail('ぼかしの設定が正しくありません');
+  setUserFuzz(me.userId, f);
+  return { shareFuzz: f };
 }
 
 function resetPassword(req) {
@@ -820,7 +868,7 @@ function uploadPhoto(req) {
     postId: 'p_' + shortId(), userId: me.userId, nickname: me.nickname, lat: lat, lng: lng,
     fileId: file.getId(), comment: comment, missionId: tag, missionText: missionText,
     createdAt: now, revealAt: revealAt, expireAt: expireAt, status: 'active', reportCount: 0,
-    fuzz: locFuzz(req.fuzz)
+    fuzz: resolveFuzz(me.userId, req.fuzz)
   };
   withLock(function () {
     if (dup()) { trashFile(post.fileId); fail('このミッションには投稿済みです'); }
@@ -835,13 +883,13 @@ function uploadPhoto(req) {
   return { post: postView(post, me, now, []), message: message };
 }
 
-function postDecimals(p) {
-  return p.fuzz === '' || p.fuzz === undefined ? numProp('POST_FUZZ_DECIMALS', 3) : locFuzz(p.fuzz);
+function postDecimals(p, prefs) {
+  return effDec(p.fuzz, prefs && prefs[p.userId], numProp('POST_FUZZ_DECIMALS', 3));
 }
 
-function postView(p, me, now, likeRows) {
+function postView(p, me, now, likeRows, prefs) {
   const mine = p.userId === me.userId;
-  const dec = postDecimals(p);
+  const dec = postDecimals(p, prefs);
   const likes = likeRows.filter(function (l) { return l.postId === p.postId; });
   return {
     postId: p.postId, userId: p.userId, nickname: p.nickname,
@@ -891,6 +939,7 @@ function listMap(req) {
     return mode === 'near' ? d <= distM : d >= distM;
   };
   const blocked = blockedSet(me.userId);
+  const prefs = userPrefMap();
   const res = { posts: [], users: [], trails: [] };
 
   if (f.timeMode === 'history') {
@@ -905,13 +954,13 @@ function listMap(req) {
       t.points.sort(function (a, b) { return a.at - b.at; });
       const lastP = t.points[t.points.length - 1];
       const mine = uid === me.userId;
-      const lastFz = locFuzz(lastP.fuzz);
+      const lastFz = effDec(lastP.fuzz, prefs[uid], 3);
       // 距離の判定もぼかした位置で行う（正確な位置を推測されないように）
       if (!mine && !pass(fuzz(lastP.lat, lastFz), fuzz(lastP.lng, lastFz))) return;
       res.trails.push({
         userId: uid, nickname: t.nickname, mine: mine, fuzzM: mine ? 0 : FUZZ_METERS[lastFz],
         points: t.points.map(function (p) {
-          const fz = locFuzz(p.fuzz);
+          const fz = effDec(p.fuzz, prefs[uid], 3);
           return { lat: mine ? Number(p.lat) : fuzz(p.lat, fz), lng: mine ? Number(p.lng) : fuzz(p.lng, fz), at: Number(p.at) };
         })
       });
@@ -924,10 +973,10 @@ function listMap(req) {
   readAll('Posts').forEach(function (p) {
     if (!visiblePost(p, me, now, blocked, hidden)) return;
     if (p.userId !== me.userId) {
-      const dec = postDecimals(p);
+      const dec = postDecimals(p, prefs);
       if (!pass(fuzz(p.lat, dec), fuzz(p.lng, dec))) return; // ぼかした位置で距離判定
     }
-    res.posts.push(postView(p, me, now, likes));
+    res.posts.push(postView(p, me, now, likes, prefs));
   });
 
   const liveFrom = now - numProp('LIVE_USER_MIN', 10) * 60000;
@@ -938,7 +987,7 @@ function listMap(req) {
   });
   Object.keys(latest).forEach(function (uid) {
     const l = latest[uid];
-    const fz = locFuzz(l.fuzz);
+    const fz = effDec(l.fuzz, prefs[uid], 3);
     const flat = fuzz(l.lat, fz), flng = fuzz(l.lng, fz);
     if (!pass(flat, flng)) return;
     res.users.push({ userId: uid, nickname: l.nickname, lat: flat, lng: flng, fuzzM: FUZZ_METERS[fz], at: Number(l.at) });
@@ -950,7 +999,7 @@ function updateLocation(req) {
   const me = auth(req);
   const lat = Number(req.lat), lng = Number(req.lng);
   if (!isFinite(lat) || !isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) fail('位置情報が正しくありません');
-  const fz = locFuzz(req.fuzz);
+  const fz = resolveFuzz(me.userId, req.fuzz);
   const c = CacheService.getScriptCache();
   // 40秒以内の連続送信は間引く（ぼかしの段階を変えたときはすぐ反映）
   if (c.get('loc_' + me.userId) === String(fz)) return { skipped: true };
@@ -971,7 +1020,7 @@ function getPost(req) {
     .filter(function (c) { return c.postId === p.postId && c.status === 'active' && !blocked[c.userId] && !hiddenC[c.commentId]; })
     .sort(function (a, b) { return a.createdAt - b.createdAt; })
     .map(function (c) { return commentView(c, me); });
-  return { post: postView(p, me, now, readAll('Likes')), comments: comments };
+  return { post: postView(p, me, now, readAll('Likes'), userPrefMap()), comments: comments };
 }
 
 function commentView(c, me) {
