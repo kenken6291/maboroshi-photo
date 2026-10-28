@@ -7,7 +7,7 @@
  */
 window.APP_CONFIG = {
   APP_NAME: 'まぼろしフォト',
-  VERSION: 'v1.1.0',
+  VERSION: 'v1.2.0',
 
   // GASウェブアプリのURL（デプロイ後に貼り替え）
   GAS_URL: 'https://script.google.com/macros/s/AKfycbzFZ4kwCPUHJNy5NceV70XHM6p6JYBC4PsKTfl2Cz7tOQu0QiRYoEgM3o_KWM0qhwh9fA/exec',
@@ -42,6 +42,14 @@ window.APP_CONFIG = {
 
   // 読み上げ：Gemini TTSを使い、失敗時はブラウザの読み上げに切り替え
   TTS: { useGemini: true, fallbackWebSpeech: true, rate: 1.05 },
+
+  // じゆう投稿：表示までの時間・表示する時間の選択肢（分）
+  FREE: {
+    delays: [0, 5, 15, 30, 60, 180],
+    durations: [10, 30, 60, 180, 720, 1440],
+    defaultDelay: 0,
+    defaultDuration: 60
+  },
 
   // 投稿写真の縮小（長辺px・JPEG画質）
   IMAGE: { maxSize: 1280, quality: 0.82 },

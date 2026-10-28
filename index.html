@@ -8,7 +8,7 @@
 <meta name="theme-color" content="#22B8EE">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Dela+Gothic+One&family=M+PLUS+Rounded+1c:wght@500;700;800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Dela+Gothic+One&family=M+PLUS+Rounded+1c:wght@500;700;800&family=Shippori+Mincho+B1:wght@600;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
 <link rel="stylesheet" href="css/style.css">
 </head>
@@ -73,7 +73,7 @@
     <button id="missionChip" class="mission-chip" data-state="waiting" type="button">次のミッションを待っています</button>
     <div class="top-actions">
       <button id="soundBtn" class="icon-btn" type="button" aria-label="読み上げ" aria-pressed="false">🔇</button>
-      <button class="icon-btn" type="button" aria-label="遊び方" data-open-tutorial>？</button>
+      <button id="paperBtn" class="icon-btn paper-btn" type="button" aria-label="まぼろし新聞（ミッションの記録）">📰</button>
       <button id="menuBtn" class="icon-btn" type="button" aria-label="メニュー">☰</button>
     </div>
   </header>
@@ -95,13 +95,13 @@
 
   <nav class="bottombar">
     <button id="filterBtn" class="pill-btn" type="button">表示条件</button>
-    <button id="cameraBtn" class="shutter" type="button" disabled aria-label="撮影">
+    <button id="cameraBtn" class="shutter free" type="button" aria-label="写真を投稿">
       <svg viewBox="0 0 88 88" class="shutter-ring" aria-hidden="true">
         <circle cx="44" cy="44" r="40" class="sr-bg"/>
         <circle cx="44" cy="44" r="40" class="sr-fg" id="shutterRing"/>
       </svg>
       <span class="shutter-core"></span>
-      <span id="shutterLabel" class="shutter-label">待機中</span>
+      <span id="shutterLabel" class="shutter-label">投稿</span>
     </button>
     <button id="listBtn" class="pill-btn" type="button">写真一覧 <span id="postCount" class="count">0</span></button>
   </nav>
@@ -161,6 +161,17 @@
       <button class="btn primary block" type="submit">この条件で表示</button>
     </div>
   </form>
+</div>
+
+<!-- ========== まぼろし新聞 ========== -->
+<div id="paperSheet" class="overlay paper-ov" hidden role="dialog" aria-label="まぼろし新聞">
+  <div class="paper">
+    <div class="paper-bar">
+      <button class="paper-back" id="paperBack" type="button" hidden>一覧へもどる</button>
+      <button class="x" type="button" data-close aria-label="閉じる">×</button>
+    </div>
+    <div id="paperBody" class="paper-body"></div>
+  </div>
 </div>
 
 <!-- ========== 予想ゲーム ========== -->
@@ -241,8 +252,17 @@
         <label class="btn lemon">カメラで撮る<input type="file" accept="image/*" capture="environment" id="camFile" hidden></label>
       </div>
     </div>
-    <div class="cam-controls" data-step="live"><button id="camShot" class="shutter-big" type="button" aria-label="シャッター"></button></div>
+    <div class="cam-controls" data-step="live">
+      <span class="cam-side"></span>
+      <button id="camShot" class="shutter-big" type="button" aria-label="シャッター"></button>
+      <span class="cam-side"><label class="btn sm pick" id="camPick">写真を選ぶ<input type="file" accept="image/*" id="camPickFile" hidden></label></span>
+    </div>
     <div class="cam-controls col" data-step="preview" hidden>
+      <div class="free-timing" id="freeTiming" hidden>
+        <div class="ft-row"><span class="ft-label">いつ出す？</span><div class="chips" id="delayChips"></div></div>
+        <div class="ft-row"><span class="ft-label">どれくらい？</span><div class="chips" id="durChips"></div></div>
+        <p class="ft-summary" id="ftSummary"></p>
+      </div>
       <div class="comment-row">
         <textarea id="camComment" maxlength="100" rows="2" placeholder="ひとこと（なくてもOK）"></textarea>
         <button type="button" class="mic" data-mic="camComment" aria-label="音声で入力" aria-pressed="false">🎤</button>
