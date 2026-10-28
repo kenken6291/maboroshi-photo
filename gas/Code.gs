@@ -1,5 +1,5 @@
 /**
- * まぼろしフォト（maboroshi-photo）GAS バックエンド  v1.4.1
+ * まぼろしフォト（maboroshi-photo）GAS バックエンド  v1.4.4
  * 位置連動型リアルタイムAIフォトシェア
  *
  * ■ スクリプトプロパティ（setup() 実行後に「プロジェクトの設定」から設定）
@@ -26,7 +26,7 @@
  * ■ コードを変更したら「デプロイを管理」→ 編集 → バージョン「新バージョン」で再デプロイ
  */
 
-const VERSION = 'v1.4.1';
+const VERSION = 'v1.4.4';
 const PROPS = PropertiesService.getScriptProperties();
 function prop(k, d) { const v = PROPS.getProperty(k); return (v === null || v === '') ? d : v; }
 function numProp(k, d) { const n = Number(prop(k, String(d))); return isFinite(n) ? n : d; }
@@ -125,9 +125,9 @@ function cleanup() {
     const locKeep = locs.filter(function (l) { return Number(l.at) >= locLimit; });
     if (locKeep.length !== locs.length) rewrite('Locations', locKeep);
 
-    const ms = readAll('Missions');
+    const ms = readMissions();
     const mKeep = ms.filter(function (m) { return Number(m.createdAt) >= now - 2 * 86400000; });
-    if (mKeep.length !== ms.length) rewrite('Missions', mKeep);
+    if (mKeep.length !== readAll('Missions').length) rewrite('Missions', mKeep); // 古い行と重複行を整理
 
     const rs = readAll('Reports');
     const rKeep = rs.filter(function (r) { return Number(r.createdAt) >= now - 30 * 86400000; });
@@ -179,15 +179,44 @@ function update(name, o) {
   sh(name).getRange(o._row, 1, 1, SHEETS[name].length).setValues([rowOf(name, o)]);
 }
 function removeRow(name, o) { sh(name).deleteRow(o._row); }
+/**
+ * シートを rows で置き換える。
+ * 先に新しい内容を上書きしてから余った行だけを消すので、
+ * 書き換え中に別の処理が読んでも「シートが空」に見える瞬間がない。
+ */
 function rewrite(name, rows) {
   const s = sh(name), last = s.getLastRow(), n = SHEETS[name].length;
-  if (last > 1) s.getRange(2, 1, last - 1, n).clearContent();
   if (rows.length) s.getRange(2, 1, rows.length, n).setValues(rows.map(function (o) { return rowOf(name, o); }));
+  const tailStart = rows.length + 2;
+  if (last >= tailStart) s.getRange(tailStart, 1, last - tailStart + 1, n).clearContent();
+  SpreadsheetApp.flush();
 }
 function withLock(fn) {
   const lock = LockService.getScriptLock();
   lock.waitLock(20000);
-  try { return fn(); } finally { lock.releaseLock(); }
+  try { return fn(); }
+  finally {
+    // 書き込みを確定させてからロックを外す（外した直後に別の処理が古い内容を読まないように）
+    SpreadsheetApp.flush();
+    lock.releaseLock();
+  }
+}
+
+/** Missionsシートを読み、同じミッションIDが重複していたら最初の1行だけを使う */
+function readMissions() {
+  const seen = {};
+  return readAll('Missions').filter(function (r) {
+    const id = String(r.missionId);
+    if (seen[id]) return false;
+    seen[id] = 1;
+    return true;
+  });
+}
+
+/** キーごとに必ず同じ値になる 0〜1 の乱数（同時に作成されても発令時刻がずれない） */
+function seededRandom(key) {
+  const b = Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, key + ':' + prop('PEPPER', ''));
+  return (((b[0] & 255) << 16) + ((b[1] & 255) << 8) + (b[2] & 255)) / 16777216;
 }
 
 /* ========== 共通ユーティリティ ========== */
@@ -525,7 +554,7 @@ const FALLBACK_MISSIONS = [
 
 function generateMission() {
   const win = numProp('MISSION_WINDOW_MIN', 4);
-  const recent = readAll('Missions').filter(function (m) { return m.text; }).slice(-6).map(function (m) { return m.text; });
+  const recent = readMissions().filter(function (m) { return m.text; }).slice(-6).map(function (m) { return m.text; });
   try {
     const j = parseJson(gemini(
       'あなたは位置連動フォトゲームのミッション係です。参加者に撮影のお題を1つ出してください。\n' +
@@ -554,7 +583,7 @@ function ensureSlotMission(now, offset) {
   const slotMs = numProp('MISSION_INTERVAL_MIN', 10) * 60000;
   const winMs = numProp('MISSION_WINDOW_MIN', 4) * 60000;
   const slotStart = (Math.floor(now / slotMs) + (offset || 0)) * slotMs;
-  const find = function () { return readAll('Missions').find(function (r) { return Number(r.slotStart) === slotStart; }); };
+  const find = function () { return readMissions().find(function (r) { return Number(r.slotStart) === slotStart; }); };
   const found = find();
   if (found) return found;
 
@@ -563,12 +592,13 @@ function ensureSlotMission(now, offset) {
     const again = find();
     if (again) return again;
     const row = { missionId: 'm_' + slotStart, slotStart: slotStart, createdAt: Date.now() };
-    if (Math.random() > numProp('MISSION_PROBABILITY', 0.9)) {
+    // 出るかどうか・発令時刻は枠ごとに固定（seededRandom）。重複して作られても内容が食い違わない
+    if (seededRandom('p' + slotStart) > numProp('MISSION_PROBABILITY', 0.9)) {
       Object.assign(row, { openAt: -1, closeAt: -1, revealAt: -1, displayMin: 0, text: '', speech: '' });
     } else {
-      const earliest = Math.max(slotStart, now + 60000);           // 最短でも1分後に発令
+      const earliest = slotStart + 60000;                           // 枠の開始から1分以降
       const latest = slotStart + slotMs - winMs - 60000;
-      const openAt = latest > earliest ? earliest + Math.floor(Math.random() * (latest - earliest)) : -1;
+      const openAt = latest > earliest ? earliest + Math.floor(seededRandom('o' + slotStart) * (latest - earliest)) : -1;
       Object.assign(row, openAt < 0
         ? { openAt: -1, closeAt: -1, revealAt: -1, displayMin: 0, text: '', speech: '' }
         : { openAt: openAt, closeAt: openAt + winMs, revealAt: openAt + winMs, displayMin: gen.displayMin, text: gen.text, speech: gen.speech });
@@ -583,7 +613,7 @@ function getMission(req) {
   ensureSlotMission(now, 0);
   ensureSlotMission(now, 1); // 次の枠も先に決めておく（気配メーター用）
   const latestArticle = latestArticleInfo();
-  const rows = readAll('Missions').filter(function (r) { return Number(r.openAt) > 0; });
+  const rows = readMissions().filter(function (r) { return Number(r.openAt) > 0; });
   const open = rows.filter(function (r) { return Number(r.openAt) <= now && now < Number(r.closeAt); })
     .sort(function (a, b) { return b.openAt - a.openAt; })[0];
   if (open) {
@@ -676,7 +706,7 @@ function generateArticles(now) {
   const arts = readAll('Articles');
   const done = {};
   arts.forEach(function (a) { done[a.missionId] = 1; });
-  const targets = readAll('Missions')
+  const targets = readMissions()
     .filter(function (m) { return Number(m.openAt) > 0 && Number(m.closeAt) <= now - 60000 && !done[m.missionId]; })
     .sort(function (a, b) { return a.openAt - b.openAt; })
     .slice(0, 2);
@@ -839,8 +869,8 @@ function uploadPhoto(req) {
     expireAt = revealAt + dur * 60000;
     missionText = 'じゆう投稿';
   } else {
-    m = readAll('Missions').find(function (r) { return r.missionId === req.missionId; });
-    if (!m || Number(m.openAt) < 0) fail('ミッションが見つかりません');
+    m = findMissionWithRetry(req.missionId);
+    if (!m || Number(m.openAt) < 0) fail('ミッションの記録を確認できませんでした。じゆう投稿として出せます');
     if (now < Number(m.openAt) || now > Number(m.closeAt) + 60000) fail('ミッションの撮影時間が終わりました。じゆう投稿として出せます');
     revealAt = Number(m.revealAt);
     expireAt = revealAt + Number(m.displayMin) * 60000;
@@ -881,6 +911,19 @@ function uploadPhoto(req) {
     ? (delay === 0 ? 'いま地図に現れました。' + durText + '後に消えます' : hhmm(revealAt) + 'に地図へ現れ、' + durText + '表示されます')
     : '投稿しました。' + hhmm(revealAt) + 'にみんなの写真といっしょに地図へ現れます';
   return { post: postView(post, me, now, []), message: message };
+}
+
+/** 定期処理でシートを整理している最中でも見つけられるよう、少し待って読み直す */
+function findMissionWithRetry(id) {
+  const find = function () {
+    return readMissions().find(function (r) { return String(r.missionId) === String(id); });
+  };
+  let m = find();
+  for (let i = 0; !m && i < 2; i++) {
+    Utilities.sleep(1500);
+    m = find();
+  }
+  return m;
 }
 
 function postDecimals(p, prefs) {

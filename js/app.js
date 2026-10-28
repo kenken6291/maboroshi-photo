@@ -1,4 +1,4 @@
-/* まぼろしフォト app.js v1.4.2 */
+/* まぼろしフォト app.js v1.4.3 */
 (() => {
   'use strict';
   const CFG = window.APP_CONFIG;
@@ -797,7 +797,16 @@
       toast(r.message);
       refreshMap();
       tick();
-    } catch (err) { toast(err.message, 'error'); }
+    } catch (err) {
+      // ミッション投稿が受け付けられなかったときは、撮った写真を残したまま「じゆう投稿」に切り替える
+      if (!free && /ミッション|撮影時間/.test(err.message)) {
+        setCamMode('free');
+        toast(`${err.message}。いつ出すかを選んで「投稿する」を押してください`, 'error');
+        refreshMission();
+      } else {
+        toast(err.message, 'error');
+      }
+    }
     finally { busy(btn, false); }
   }
 
