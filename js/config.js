@@ -7,7 +7,7 @@
  */
 window.APP_CONFIG = {
   APP_NAME: 'まぼろしフォト',
-  VERSION: 'v1.2.0',
+  VERSION: 'v1.3.0',
 
   // GASウェブアプリのURL（デプロイ後に貼り替え）
   GAS_URL: 'https://script.google.com/macros/s/AKfycbzFZ4kwCPUHJNy5NceV70XHM6p6JYBC4PsKTfl2Cz7tOQu0QiRYoEgM3o_KWM0qhwh9fA/exec',
@@ -31,6 +31,7 @@ window.APP_CONFIG = {
     nearM: 500,            // 近接表示の距離（m）
     farM: 5000,            // 遠隔表示の距離（m）
     share: true,           // 自分の現在地を共有する
+    shareFuzz: 3,          // 現在地のぼかし 3=約100m / 2=約1km / 1=約10km
     sound: false           // 読み上げ
   },
 

@@ -1,4 +1,4 @@
-/* まぼろしフォト app.js v1.2.0 */
+/* まぼろしフォト app.js v1.3.0 */
 (() => {
   'use strict';
   const CFG = window.APP_CONFIG;
@@ -36,6 +36,8 @@
     if (f && CFG.FREE.durations.includes(f.dur)) S.freeDur = f.dur;
   })();
   const now = () => Date.now() + S.clockOffset;
+  const FUZZ_LABEL = { 3: '約100m', 2: '約1km', 1: '約10km' };
+  const fuzzLabelM = (m) => (m >= 10000 ? '約10km' : m >= 1000 ? '約1km' : '約100m');
   const saveSettings = () => localStorage.setItem(KEY + '_settings', JSON.stringify(S.settings));
 
   /* ========== 表示ヘルパー ========== */
@@ -360,7 +362,7 @@
     S.layers.users.clearLayers();
     S.users.forEach((u) => {
       L.marker([u.lat, u.lng], {
-        icon: L.divIcon({ className: 'pin-wrap', iconSize: [0, 0], html: `<div class="pin-user">${esc(u.nickname)}</div>` }),
+        icon: L.divIcon({ className: 'pin-wrap', iconSize: [0, 0], html: `<div class="pin-user">${esc(u.nickname)}${u.fuzzM > 100 ? `<small>${fuzzLabelM(u.fuzzM)}</small>` : ''}</div>` }),
         interactive: false
       }).addTo(S.layers.users);
     });
@@ -374,7 +376,7 @@
         const last = i === t.points.length - 1;
         if (!last && i % 3) return;
         L.circleMarker([p.lat, p.lng], { radius: last ? 8 : 4, color: '#25205E', weight: 2, fillColor: color, fillOpacity: 1 })
-          .bindTooltip(`${esc(t.nickname)}（${fmtTime(p.at)}）`, { direction: 'top' })
+          .bindTooltip(`${esc(t.nickname)}（${fmtTime(p.at)}${t.fuzzM > 100 ? '・' + fuzzLabelM(t.fuzzM) + 'ぼかし' : ''}）`, { direction: 'top' })
           .addTo(S.layers.trails);
       });
     });
@@ -433,7 +435,7 @@
 
   async function sendLocation() {
     if (!S.user || !S.pos || !S.settings.share || document.hidden) return;
-    try { await API.call('updateLocation', { lat: S.pos.lat, lng: S.pos.lng }); } catch (e) { console.warn(e); }
+    try { await API.call('updateLocation', { lat: S.pos.lat, lng: S.pos.lng, fuzz: S.settings.shareFuzz || 3 }); } catch (e) { console.warn(e); }
   }
 
   /* ========== ミッション ========== */
@@ -1124,6 +1126,13 @@
     $('#farField').hidden = f.distanceMode.value !== 'far';
     $('#nearOut').textContent = fmtDist(Number(f.nearM.value));
     $('#farOut').textContent = fmtDist(Number(f.farM.value));
+    $('#fuzzField').hidden = !f.share.checked;
+    const fz = Number(f.shareFuzz.value) || 3;
+    $('#fuzzNote').textContent = fz === 3
+      ? 'ほかの人には、だいたいの場所（町内くらい）が見えます。'
+      : fz === 2
+        ? 'ほかの人には、駅ひとつ分くらいの広さでしか分かりません。'
+        : 'ほかの人には、市や区くらいの広さでしか分かりません。';
   }
 
   function openFilter() {
@@ -1134,6 +1143,7 @@
     f.nearM.value = st.nearM;
     f.farM.value = st.farM;
     f.share.checked = !!st.share;
+    f.shareFuzz.value = String(st.shareFuzz || 3);
     syncFilterUi();
     openSheet('filterSheet');
   }
@@ -1144,7 +1154,8 @@
       ? `${st.historyMin >= 60 ? st.historyMin / 60 + '時間' : st.historyMin + '分'}前からの足あと`
       : 'いま公開中';
     const d = st.distanceMode === 'near' ? `${fmtDist(st.nearM)}以内` : st.distanceMode === 'far' ? `${fmtDist(st.farM)}以上先` : 'すべての距離';
-    $('#filterSummary').textContent = `${t}・${d}`;
+    const me = st.share ? `現在地${FUZZ_LABEL[st.shareFuzz || 3]}で共有` : '現在地は非共有';
+    $('#filterSummary').textContent = `${t}・${d}・${me}`;
   }
 
   $('#filterForm').addEventListener('input', syncFilterUi);
@@ -1154,7 +1165,7 @@
     Object.assign(S.settings, {
       timeMode: f.timeMode.value, historyMin: Number(f.historyMin.value),
       distanceMode: f.distanceMode.value, nearM: Number(f.nearM.value), farM: Number(f.farM.value),
-      share: f.share.checked
+      share: f.share.checked, shareFuzz: Number(f.shareFuzz.value) || 3
     });
     saveSettings();
     drawRange();

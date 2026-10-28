@@ -1,5 +1,5 @@
 /**
- * まぼろしフォト（maboroshi-photo）GAS バックエンド  v1.2.0
+ * まぼろしフォト（maboroshi-photo）GAS バックエンド  v1.3.0
  * 位置連動型リアルタイムAIフォトシェア
  *
  * ■ スクリプトプロパティ（setup() 実行後に「プロジェクトの設定」から設定）
@@ -16,7 +16,8 @@
  *   FREE_POSTS_PER_HOUR   : じゆう投稿の1時間あたり上限（既定 6）
  *   DISPLAY_MIN_DEFAULT   : AIが決められなかった時の表示分数（既定 30）
  *   REPORT_HIDE_THRESHOLD : 何件の通報で全員から非表示にするか（既定 3）
- *   POST_FUZZ_DECIMALS    : 他人に見せる位置の丸め桁（既定 3 ≒ 約100m）
+ *   POST_FUZZ_DECIMALS    : 他人に見せる写真位置の丸め桁（既定 3 ≒ 約100m）
+ *   ※ 現在地・足あとのぼかしは、各利用者が 約100m／約1km／約10km から選択（Locations.fuzz）
  *   LOCATION_KEEP_HOURS   : 位置履歴の保存時間（既定 24）
  *   LIVE_USER_MIN         : 「いまいる人」とみなす時間・分（既定 10）
  *   NG_WORDS              : カンマ区切りのNGワード
@@ -25,7 +26,7 @@
  * ■ コードを変更したら「デプロイを管理」→ 編集 → バージョン「新バージョン」で再デプロイ
  */
 
-const VERSION = 'v1.2.0';
+const VERSION = 'v1.3.0';
 const PROPS = PropertiesService.getScriptProperties();
 function prop(k, d) { const v = PROPS.getProperty(k); return (v === null || v === '') ? d : v; }
 function numProp(k, d) { const n = Number(prop(k, String(d))); return isFinite(n) ? n : d; }
@@ -37,7 +38,7 @@ const SHEETS = {
   Likes:     ['postId', 'userId', 'createdAt'],
   Blocks:    ['userId', 'targetUserId', 'createdAt'],
   Reports:   ['reportId', 'reporterId', 'targetType', 'targetId', 'reason', 'createdAt'],
-  Locations: ['userId', 'nickname', 'lat', 'lng', 'at'],
+  Locations: ['userId', 'nickname', 'lat', 'lng', 'at', 'fuzz'],
   Missions:  ['missionId', 'slotStart', 'openAt', 'closeAt', 'revealAt', 'displayMin', 'text', 'speech', 'createdAt'],
   Articles:  ['articleId', 'missionId', 'edition', 'style', 'openAt', 'missionText', 'headline', 'subhead', 'lead', 'body', 'columnTitle', 'column', 'catches', 'stats', 'createdAt']
 };
@@ -148,6 +149,9 @@ function sh(name) {
     s = book().insertSheet(name);
     s.getRange(1, 1, 1, SHEETS[name].length).setValues([SHEETS[name]]).setFontWeight('bold');
     s.setFrozenRows(1);
+  } else if (s.getLastColumn() < SHEETS[name].length) {
+    // 列が増えた版へ更新したとき、見出し行を最新にする
+    s.getRange(1, 1, 1, SHEETS[name].length).setValues([SHEETS[name]]).setFontWeight('bold');
   }
   return s;
 }
@@ -201,8 +205,12 @@ function haversine(lat1, lng1, lat2, lng2) {
   const h = Math.pow(Math.sin(dLat / 2), 2) + Math.cos(r(lat1)) * Math.cos(r(lat2)) * Math.pow(Math.sin(dLng / 2), 2);
   return 2 * R * Math.asin(Math.sqrt(h));
 }
-function fuzz(v) {
-  const f = Math.pow(10, numProp('POST_FUZZ_DECIMALS', 3));
+/** 現在地のぼかし段階（小数点以下の桁数）3≒約100m / 2≒約1km / 1≒約10km */
+const FUZZ_METERS = { 3: 100, 2: 1000, 1: 10000 };
+function locFuzz(v) { const n = Number(v); return n === 1 || n === 2 || n === 3 ? n : 3; }
+
+function fuzz(v, decimals) {
+  const f = Math.pow(10, decimals === undefined ? numProp('POST_FUZZ_DECIMALS', 3) : decimals);
   return Math.round(Number(v) * f) / f;
 }
 function trashFile(id) {
@@ -852,11 +860,14 @@ function listMap(req) {
       t.points.sort(function (a, b) { return a.at - b.at; });
       const lastP = t.points[t.points.length - 1];
       const mine = uid === me.userId;
-      if (!mine && !pass(lastP.lat, lastP.lng)) return;
+      const lastFz = locFuzz(lastP.fuzz);
+      // 距離の判定もぼかした位置で行う（正確な位置を推測されないように）
+      if (!mine && !pass(fuzz(lastP.lat, lastFz), fuzz(lastP.lng, lastFz))) return;
       res.trails.push({
-        userId: uid, nickname: t.nickname, mine: mine,
+        userId: uid, nickname: t.nickname, mine: mine, fuzzM: mine ? 0 : FUZZ_METERS[lastFz],
         points: t.points.map(function (p) {
-          return { lat: mine ? Number(p.lat) : fuzz(p.lat), lng: mine ? Number(p.lng) : fuzz(p.lng), at: Number(p.at) };
+          const fz = locFuzz(p.fuzz);
+          return { lat: mine ? Number(p.lat) : fuzz(p.lat, fz), lng: mine ? Number(p.lng) : fuzz(p.lng, fz), at: Number(p.at) };
         })
       });
     });
@@ -879,8 +890,10 @@ function listMap(req) {
   });
   Object.keys(latest).forEach(function (uid) {
     const l = latest[uid];
-    if (!pass(l.lat, l.lng)) return;
-    res.users.push({ userId: uid, nickname: l.nickname, lat: fuzz(l.lat), lng: fuzz(l.lng), at: Number(l.at) });
+    const fz = locFuzz(l.fuzz);
+    const flat = fuzz(l.lat, fz), flng = fuzz(l.lng, fz);
+    if (!pass(flat, flng)) return;
+    res.users.push({ userId: uid, nickname: l.nickname, lat: flat, lng: flng, fuzzM: FUZZ_METERS[fz], at: Number(l.at) });
   });
   return res;
 }
@@ -889,10 +902,12 @@ function updateLocation(req) {
   const me = auth(req);
   const lat = Number(req.lat), lng = Number(req.lng);
   if (!isFinite(lat) || !isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) fail('位置情報が正しくありません');
+  const fz = locFuzz(req.fuzz);
   const c = CacheService.getScriptCache();
-  if (c.get('loc_' + me.userId)) return { skipped: true };
-  c.put('loc_' + me.userId, '1', 40);
-  withLock(function () { append('Locations', { userId: me.userId, nickname: me.nickname, lat: lat, lng: lng, at: Date.now() }); });
+  // 40秒以内の連続送信は間引く（ぼかしの段階を変えたときはすぐ反映）
+  if (c.get('loc_' + me.userId) === String(fz)) return { skipped: true };
+  c.put('loc_' + me.userId, String(fz), 40);
+  withLock(function () { append('Locations', { userId: me.userId, nickname: me.nickname, lat: lat, lng: lng, at: Date.now(), fuzz: fz }); });
   return {};
 }
 
