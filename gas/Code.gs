@@ -1,5 +1,5 @@
 /**
- * まぼろしフォト（maboroshi-photo）GAS バックエンド  v1.3.0
+ * まぼろしフォト（maboroshi-photo）GAS バックエンド  v1.3.1
  * 位置連動型リアルタイムAIフォトシェア
  *
  * ■ スクリプトプロパティ（setup() 実行後に「プロジェクトの設定」から設定）
@@ -16,8 +16,8 @@
  *   FREE_POSTS_PER_HOUR   : じゆう投稿の1時間あたり上限（既定 6）
  *   DISPLAY_MIN_DEFAULT   : AIが決められなかった時の表示分数（既定 30）
  *   REPORT_HIDE_THRESHOLD : 何件の通報で全員から非表示にするか（既定 3）
- *   POST_FUZZ_DECIMALS    : 他人に見せる写真位置の丸め桁（既定 3 ≒ 約100m）
- *   ※ 現在地・足あとのぼかしは、各利用者が 約100m／約1km／約10km から選択（Locations.fuzz）
+ *   POST_FUZZ_DECIMALS    : fuzz 未記録の古い写真に使う丸め桁（既定 3 ≒ 約100m）
+ *   ※ 現在地・足あと・写真のぼかしは、各利用者が 約100m／約1km／約10km から選択（Locations.fuzz / Posts.fuzz）
  *   LOCATION_KEEP_HOURS   : 位置履歴の保存時間（既定 24）
  *   LIVE_USER_MIN         : 「いまいる人」とみなす時間・分（既定 10）
  *   NG_WORDS              : カンマ区切りのNGワード
@@ -26,14 +26,14 @@
  * ■ コードを変更したら「デプロイを管理」→ 編集 → バージョン「新バージョン」で再デプロイ
  */
 
-const VERSION = 'v1.3.0';
+const VERSION = 'v1.3.1';
 const PROPS = PropertiesService.getScriptProperties();
 function prop(k, d) { const v = PROPS.getProperty(k); return (v === null || v === '') ? d : v; }
 function numProp(k, d) { const n = Number(prop(k, String(d))); return isFinite(n) ? n : d; }
 
 const SHEETS = {
   Users:     ['userId', 'email', 'nickname', 'hash', 'salt', 'mustChange', 'failCount', 'lockedUntil', 'role', 'agreedAt', 'createdAt', 'status'],
-  Posts:     ['postId', 'userId', 'nickname', 'lat', 'lng', 'fileId', 'comment', 'missionId', 'missionText', 'createdAt', 'revealAt', 'expireAt', 'status', 'reportCount'],
+  Posts:     ['postId', 'userId', 'nickname', 'lat', 'lng', 'fileId', 'comment', 'missionId', 'missionText', 'createdAt', 'revealAt', 'expireAt', 'status', 'reportCount', 'fuzz'],
   Comments:  ['commentId', 'postId', 'userId', 'nickname', 'text', 'createdAt', 'updatedAt', 'status', 'reportCount'],
   Likes:     ['postId', 'userId', 'createdAt'],
   Blocks:    ['userId', 'targetUserId', 'createdAt'],
@@ -781,7 +781,8 @@ function uploadPhoto(req) {
   const post = {
     postId: 'p_' + shortId(), userId: me.userId, nickname: me.nickname, lat: lat, lng: lng,
     fileId: file.getId(), comment: comment, missionId: tag, missionText: missionText,
-    createdAt: now, revealAt: revealAt, expireAt: expireAt, status: 'active', reportCount: 0
+    createdAt: now, revealAt: revealAt, expireAt: expireAt, status: 'active', reportCount: 0,
+    fuzz: locFuzz(req.fuzz)
   };
   withLock(function () {
     if (dup()) { trashFile(post.fileId); fail('このミッションには投稿済みです'); }
@@ -796,12 +797,18 @@ function uploadPhoto(req) {
   return { post: postView(post, me, now, []), message: message };
 }
 
+function postDecimals(p) {
+  return p.fuzz === '' || p.fuzz === undefined ? numProp('POST_FUZZ_DECIMALS', 3) : locFuzz(p.fuzz);
+}
+
 function postView(p, me, now, likeRows) {
   const mine = p.userId === me.userId;
+  const dec = postDecimals(p);
   const likes = likeRows.filter(function (l) { return l.postId === p.postId; });
   return {
     postId: p.postId, userId: p.userId, nickname: p.nickname,
-    lat: mine ? Number(p.lat) : fuzz(p.lat), lng: mine ? Number(p.lng) : fuzz(p.lng),
+    lat: mine ? Number(p.lat) : fuzz(p.lat, dec), lng: mine ? Number(p.lng) : fuzz(p.lng, dec),
+    fuzzM: FUZZ_METERS[dec] || 100,
     imageUrl: 'https://drive.google.com/thumbnail?id=' + p.fileId + '&sz=w1200',
     thumbUrl: 'https://drive.google.com/thumbnail?id=' + p.fileId + '&sz=w200',
     comment: p.comment, missionText: p.missionText,
@@ -878,7 +885,10 @@ function listMap(req) {
   const likes = readAll('Likes');
   readAll('Posts').forEach(function (p) {
     if (!visiblePost(p, me, now, blocked, hidden)) return;
-    if (p.userId !== me.userId && !pass(p.lat, p.lng)) return;
+    if (p.userId !== me.userId) {
+      const dec = postDecimals(p);
+      if (!pass(fuzz(p.lat, dec), fuzz(p.lng, dec))) return; // ぼかした位置で距離判定
+    }
     res.posts.push(postView(p, me, now, likes));
   });
 

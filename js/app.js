@@ -1,4 +1,4 @@
-/* まぼろしフォト app.js v1.3.0 */
+/* まぼろしフォト app.js v1.3.1 */
 (() => {
   'use strict';
   const CFG = window.APP_CONFIG;
@@ -309,6 +309,13 @@
     S.layers.range.clearLayers();
     if (!S.pos) return;
     const st = S.settings, ll = [S.pos.lat, S.pos.lng];
+    // ほかの人から見た自分の位置のあいまいさ（自分の画面では正確な位置に表示される）
+    if (st.share) {
+      const fz = st.shareFuzz || 3, r = { 3: 100, 2: 1000, 1: 10000 }[fz];
+      L.circle(ll, { radius: r, color: '#22B8EE', weight: 2, dashArray: '4 6', fillColor: '#22B8EE', fillOpacity: 0.08 })
+        .bindTooltip(`ほかの人には、この${FUZZ_LABEL[fz]}の範囲のどこかに見えます`, { sticky: true })
+        .addTo(S.layers.range);
+    }
     if (st.distanceMode === 'near') {
       L.circle(ll, { radius: st.nearM, color: '#25205E', weight: 2, fillColor: '#FFE04A', fillOpacity: 0.18, interactive: false }).addTo(S.layers.range);
     } else if (st.distanceMode === 'far') {
@@ -671,6 +678,7 @@
     $('#camMission').textContent = free ? 'じゆう投稿：出す時間は自分で決められます' : S.mission.text;
     $('#camLeft').hidden = free;
     $('#freeTiming').hidden = !free;
+    $('#camMission').title = `撮影場所はほかの人には${FUZZ_LABEL[S.settings.shareFuzz || 3]}ぼかして表示されます`;
     if (free) renderFreeTiming();
   }
 
@@ -752,7 +760,7 @@
     const btn = $('#camSend');
     busy(btn, true, '送信中…');
     try {
-      const base = { image: S.shot, lat: S.pos.lat, lng: S.pos.lng, comment: $('#camComment').value.trim() };
+      const base = { image: S.shot, lat: S.pos.lat, lng: S.pos.lng, comment: $('#camComment').value.trim(), fuzz: S.settings.shareFuzz || 3 };
       const r = await API.call('uploadPhoto', free
         ? Object.assign(base, { missionId: 'free', delayMin: S.freeDelay, durationMin: S.freeDur })
         : Object.assign(base, { missionId: m.missionId }), { timeout: 90000 });
@@ -801,6 +809,7 @@
       <img class="post-photo" src="${esc(p.imageUrl)}" alt="${esc(p.nickname)}さんの写真" referrerpolicy="no-referrer">
       <div class="post-meta"><strong>${esc(p.nickname)}</strong><span class="remain" id="postRemain"></span></div>
       <p class="mission-tag">${p.free ? 'じゆう投稿' : `ミッション「${esc(p.missionText)}」`}${esc(far)}</p>
+      ${p.mine ? `<p class="muted small">あなたには正確な場所に見えています。ほかの人には${fuzzLabelM(p.fuzzM || 100)}ぼかした位置に表示されます。</p>` : ''}
       <div id="postCommentBox">${p.comment ? `<p class="bubble">${esc(p.comment)}</p>` : (p.mine ? '<p class="muted small">ひとことはまだありません</p>' : '')}</div>
       <div class="actions">
         <button type="button" class="btn sm like ${p.liked ? 'on' : ''}" data-act="like" aria-pressed="${p.liked}">いいね ${p.likes}</button>
