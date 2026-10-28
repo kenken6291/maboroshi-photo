@@ -1,4 +1,4 @@
-/* まぼろしフォト app.js v1.3.1 */
+/* まぼろしフォト app.js v1.4.0 */
 (() => {
   'use strict';
   const CFG = window.APP_CONFIG;
@@ -261,6 +261,21 @@
     } catch (err) { toast(err.message, 'error'); }
     finally { busy(btn, false); }
   });
+
+  /* ========== ニックネーム変更 ========== */
+  function openNickModal() {
+    const f = $('#nickForm');
+    f.reset();
+    $('#nickCurrent').value = S.user.nickname;
+    f.nickname.value = S.user.nickname;
+    updateNickCount();
+    openSheet('nickModal');
+    setTimeout(() => { f.nickname.focus(); f.nickname.select(); }, 250);
+  }
+  function updateNickCount() {
+    const v = $('#nickForm').nickname.value.trim();
+    $('#nickCount').textContent = `${v.length} / 20文字`;
+  }
 
   /* ========== 地図 ========== */
   function initMap() {
@@ -1306,6 +1321,27 @@
     $('#camClose').onclick = () => closeSheet('cameraModal');
     $('#camFile').onchange = onFile;
     $('#changePwBtn').onclick = () => { closeSheet('menuSheet'); openPwModal(false); };
+    $('#changeNickBtn').onclick = () => { closeSheet('menuSheet'); openNickModal(); };
+    $('#nickForm').addEventListener('input', updateNickCount);
+    $('#nickForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const f = e.target, btn = $('[type=submit]', f);
+      const nickname = f.nickname.value.trim();
+      if (!nickname) return toast('新しいニックネームを入力してください', 'error');
+      busy(btn, true, '変更中…');
+      try {
+        const r = await API.call('changeNickname', { nickname });
+        S.user.nickname = r.user.nickname;
+        Session.update({ user: S.user });
+        $('#menuNick').textContent = `${S.user.nickname} さん`;
+        closeSheet('nickModal');
+        toast(r.message);
+        S.posts = [];
+        renderMap();
+        refreshMap();
+      } catch (err) { toast(err.message, 'error'); }
+      finally { busy(btn, false); }
+    });
     $('#logoutBtn').onclick = logout;
     $('#adminMissionBtn').onclick = async () => {
       const text = window.prompt('ミッションのお題（空欄ならAIが考えます）', '');

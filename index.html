@@ -233,6 +233,7 @@
   <div class="sheet">
     <div class="sheet-head"><h2 id="menuNick"></h2><button type="button" class="x" data-close aria-label="閉じる">×</button></div>
     <div class="sheet-body">
+      <button class="btn block" id="changeNickBtn" type="button">ニックネームを変更</button>
       <button class="btn block" id="changePwBtn" type="button">パスワードを変更</button>
       <button class="btn block" type="button" data-open-tutorial>遊び方を見る</button>
       <button class="btn block lemon" id="adminMissionBtn" type="button" hidden>いますぐミッションを出す（管理者）</button>
@@ -281,6 +282,18 @@
       </div>
     </div>
   </div>
+</div>
+
+<!-- ========== ニックネーム変更 ========== -->
+<div id="nickModal" class="overlay center" hidden>
+  <form id="nickForm" class="modal form">
+    <div class="modal-head"><h2>ニックネームを変更</h2><button type="button" class="x" data-close aria-label="閉じる">×</button></div>
+    <p class="muted small">地図の名前札・写真・コメントに表示される名前です。いま表示中の写真やコメントの名前も新しい名前に変わります。過去の新聞記事に載った名前はそのままです。</p>
+    <label>いまのニックネーム<input type="text" id="nickCurrent" disabled></label>
+    <label>新しいニックネーム（20文字まで）<input type="text" name="nickname" maxlength="20" required autocomplete="nickname"></label>
+    <p class="muted small" id="nickCount"></p>
+    <button class="btn primary block" type="submit">ニックネームを変更する</button>
+  </form>
 </div>
 
 <!-- ========== パスワード変更 ========== -->

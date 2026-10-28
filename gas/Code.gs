@@ -1,5 +1,5 @@
 /**
- * まぼろしフォト（maboroshi-photo）GAS バックエンド  v1.3.1
+ * まぼろしフォト（maboroshi-photo）GAS バックエンド  v1.4.0
  * 位置連動型リアルタイムAIフォトシェア
  *
  * ■ スクリプトプロパティ（setup() 実行後に「プロジェクトの設定」から設定）
@@ -26,7 +26,7 @@
  * ■ コードを変更したら「デプロイを管理」→ 編集 → バージョン「新バージョン」で再デプロイ
  */
 
-const VERSION = 'v1.3.1';
+const VERSION = 'v1.4.0';
 const PROPS = PropertiesService.getScriptProperties();
 function prop(k, d) { const v = PROPS.getProperty(k); return (v === null || v === '') ? d : v; }
 function numProp(k, d) { const n = Number(prop(k, String(d))); return isFinite(n) ? n : d; }
@@ -45,7 +45,7 @@ const SHEETS = {
 
 const ROUTES = {
   register: register, login: login, me: me, logout: logout,
-  changePassword: changePassword, resetPassword: resetPassword,
+  changePassword: changePassword, resetPassword: resetPassword, changeNickname: changeNickname,
   getMission: getMission, adminMission: adminMission,
   uploadPhoto: uploadPhoto, listMap: listMap, updateLocation: updateLocation,
   getPost: getPost, editPost: editPost, deletePost: deletePost,
@@ -250,7 +250,10 @@ function auth(req) {
   const v = c.get('s_' + req.token);
   if (!v) authFail();
   c.put('s_' + req.token, v, 21600); // 利用のたびに6時間延長
-  return JSON.parse(v);
+  const s = JSON.parse(v);
+  const nick = c.get('nick_' + s.userId); // 別の端末でニックネームを変えた場合も反映
+  if (nick) s.nickname = nick;
+  return s;
 }
 function pubUser(u) {
   return { userId: u.userId, nickname: u.nickname, role: u.role || 'member', mustChange: truthy(u.mustChange) };
@@ -333,6 +336,41 @@ function changePassword(req) {
     update('Users', u);
   });
   return { message: 'パスワードを変更しました' };
+}
+
+/** ニックネーム変更：表示中の写真・コメント・位置の名前もまとめて書き換える（過去の新聞記事はそのまま） */
+function changeNickname(req) {
+  const me = auth(req);
+  const nickname = clean(req.nickname, 20);
+  if (!nickname) fail('ニックネームを入力してください');
+  if (nickname === me.nickname) fail('いまと同じニックネームです');
+  const c = CacheService.getScriptCache();
+  if (c.get('nickchg_' + me.userId)) fail('ニックネームの変更は10分に1回までです。少し時間をおいてどうぞ');
+  try { moderate(nickname); }
+  catch (e) { fail(String(e.message).replace('このコメントは投稿できません', 'このニックネームは使えません')); }
+
+  let user;
+  withLock(function () {
+    const users = readAll('Users');
+    if (users.some(function (u) { return u.nickname === nickname && u.userId !== me.userId; })) fail('このニックネームはすでに使われています');
+    user = users.find(function (u) { return u.userId === me.userId; });
+    if (!user) authFail();
+    user.nickname = nickname;
+    update('Users', user);
+    ['Posts', 'Comments', 'Locations'].forEach(function (name) {
+      const rows = readAll(name);
+      let changed = false;
+      rows.forEach(function (r) {
+        if (r.userId === me.userId && r.nickname !== nickname) { r.nickname = nickname; changed = true; }
+      });
+      if (changed) rewrite(name, rows);
+    });
+  });
+
+  c.put('s_' + req.token, JSON.stringify({ userId: me.userId, nickname: nickname, role: me.role }), 21600);
+  c.put('nick_' + me.userId, nickname, 21600);
+  c.put('nickchg_' + me.userId, '1', 600);
+  return { user: pubUser(user), message: 'ニックネームを「' + nickname + '」に変更しました' };
 }
 
 function resetPassword(req) {
