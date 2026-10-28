@@ -10,7 +10,7 @@ window.APP_CONFIG = {
   VERSION: 'v1.0.0',
 
   // GASウェブアプリのURL（デプロイ後に貼り替え）
-  GAS_URL: 'https://script.google.com/macros/s/XXXXXXXXXXXXXXXX/exec',
+  GAS_URL: 'https://script.google.com/macros/s/AKfycbzFZ4kwCPUHJNy5NceV70XHM6p6JYBC4PsKTfl2Cz7tOQu0QiRYoEgM3o_KWM0qhwh9fA/exec',
 
   // ブラウザ保存用のキー（他アプリと重ならない名前）
   STORAGE_KEY: 'maboroshi_photo',
