@@ -1,10 +1,17 @@
 /**
- * まぼろしフォト（maboroshi-photo）GAS バックエンド  v1.4.4
+ * まぼろしフォト（maboroshi-photo）GAS バックエンド  v1.5.0
  * 位置連動型リアルタイムAIフォトシェア
  *
  * ■ スクリプトプロパティ（setup() 実行後に「プロジェクトの設定」から設定）
  *   GEMINI_API_KEY        : Gemini APIキー（必須）
- *   GEMINI_MODEL          : 文章生成モデル（既定 gemini-3.8-flash。失敗時は gemini-2.5-flash に自動切替）
+ *   GEMINI_MODEL          : 文章生成モデル（任意。画面で「自動」の時に使う。未設定なら汎用の最新モデル）
+ *
+ * ■ Geminiモデルの決定順（v1.5.0〜）
+ *   1. 画面メニュー「AIモデル」で選ばれたモデル（リクエストの model）
+ *   2. スクリプトプロパティ GEMINI_MODEL
+ *   3. 汎用の最新モデル FALLBACK_GEMINI_MODELS を先頭から順に試す
+ *   ※ 指定モデルに該当がない（廃止・未公開・名前違い）／混雑(429/500/503)が続く場合は、
+ *     FALLBACK_GEMINI_MODELS へ自動で切り替える
  *   GEMINI_TTS_MODEL      : 音声合成モデル（既定 gemini-2.5-flash-preview-tts）
  *   TTS_VOICE             : 声の名前（既定 Leda）
  *   APP_URL               : 公開URL（メール本文に記載）例 https://kenken6291.github.io/maboroshi-photo/
@@ -26,7 +33,20 @@
  * ■ コードを変更したら「デプロイを管理」→ 編集 → バージョン「新バージョン」で再デプロイ
  */
 
-const VERSION = 'v1.4.4';
+const VERSION = 'v1.5.0';
+
+// 指定なし・該当なしの時に使う汎用最新モデル（先頭から順に試す）
+//   gemini-flash-latest : Googleが常に最新の汎用モデルへ自動で差し替えるエイリアス
+//   gemini-4-hydrogen   : 2026年11月時点の汎用最新モデル
+//   gemini-3.8-flash 以降 : 混雑・廃止時の保険
+const FALLBACK_GEMINI_MODELS = ['gemini-flash-latest', 'gemini-4-hydrogen', 'gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-3.5-flash-lite'];
+const GEMINI_MODEL_PATTERN = /^gemini-[a-z0-9][a-z0-9.\-]{0,60}$/;
+const GEMINI_RETRY_CODES = [429, 500, 503];
+const GEMINI_MAX_ATTEMPTS = 2; // 1モデルあたりの試行回数
+
+// 1回のリクエスト内だけで使う値（GASは実行ごとに初期化される）
+let REQ_MODEL = '';   // 画面で選ばれたモデル
+let USED_MODEL = '';  // 実際に応答したモデル
 const PROPS = PropertiesService.getScriptProperties();
 function prop(k, d) { const v = PROPS.getProperty(k); return (v === null || v === '') ? d : v; }
 function numProp(k, d) { const n = Number(prop(k, String(d))); return isFinite(n) ? n : d; }
@@ -57,18 +77,25 @@ const ROUTES = {
 
 /* ========== エントリポイント ========== */
 function doGet() {
-  return out({ ok: true, app: 'maboroshi-photo', version: VERSION });
+  return out({ ok: true, app: 'maboroshi-photo', version: VERSION, defaultModel: resolveGeminiModel_(''), fallbackModels: FALLBACK_GEMINI_MODELS });
 }
 
 function doPost(e) {
   let req;
   try { req = JSON.parse((e && e.postData && e.postData.contents) || '{}'); }
   catch (err) { return out({ ok: false, message: 'リクエストの形式が正しくありません' }); }
+  REQ_MODEL = String(req.model || '').trim().toLowerCase();
+  USED_MODEL = '';
   const fn = ROUTES[req.action];
   if (!fn) return out({ ok: false, message: '不明な操作です: ' + req.action });
   try {
     const result = fn(req) || {};
-    return out(Object.assign({ ok: true, serverNow: Date.now() }, result));
+    const env = { ok: true, serverNow: Date.now() };
+    if (USED_MODEL) {
+      const requested = resolveGeminiModel_(REQ_MODEL);
+      env.aiModel = USED_MODEL; env.aiRequested = requested; env.aiFallback = USED_MODEL !== requested;
+    }
+    return out(Object.assign(env, result));
   } catch (err) {
     if (err && err.code === 'AUTH') return out({ ok: false, error: 'AUTH', message: 'ログインの有効期限が切れました。もう一度ログインしてください' });
     console.error(err && err.stack || err);
@@ -478,27 +505,73 @@ function gemini(prompt, asJson) {
   return geminiParts([{ text: prompt }], asJson);
 }
 
+/**
+ * 使用するGeminiモデル名を決定する（画面の選択 → スクリプトプロパティ → 汎用の最新）。
+ * モデル名は "gemini-" で始まる英小文字・数字・ハイフン・ドットのみ受け付ける。
+ */
+function resolveGeminiModel_(requested) {
+  const req = String(requested || '').trim().toLowerCase();
+  if (req && GEMINI_MODEL_PATTERN.test(req)) return req;
+  const p = String(prop('GEMINI_MODEL', '')).trim().toLowerCase();
+  if (p && GEMINI_MODEL_PATTERN.test(p)) return p;
+  return FALLBACK_GEMINI_MODELS[0];
+}
+
+/** モデルが存在しない（廃止・名前違い）ことを示す応答かどうか */
+function isModelNotFound_(code, text) {
+  if (code === 404) return true;
+  if (code === 400 && /model|NOT_FOUND|not found|not supported/i.test(text)) {
+    return /not found|is not supported|NOT_FOUND|unknown model|invalid model/i.test(text);
+  }
+  return false;
+}
+
+/** 1モデルを呼び出す。混雑(429/500/503)時は少し待って再試行 */
+function callGeminiModel_(model, key, body) {
+  let res = null;
+  for (let attempt = 1; attempt <= GEMINI_MAX_ATTEMPTS; attempt++) {
+    res = UrlFetchApp.fetch('https://generativelanguage.googleapis.com/v1beta/models/' + encodeURIComponent(model) + ':generateContent', {
+      method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+      headers: { 'x-goog-api-key': key },
+      payload: JSON.stringify(body)
+    });
+    const code = res.getResponseCode();
+    if (GEMINI_RETRY_CODES.indexOf(code) === -1 || attempt === GEMINI_MAX_ATTEMPTS) break;
+    Utilities.sleep(800 * attempt);
+  }
+  return { code: res.getResponseCode(), text: res.getContentText() };
+}
+
 /** 画像も渡せる版（parts: [{text}] / [{inlineData:{mimeType,data}}]） */
 function geminiParts(parts, asJson) {
   const key = prop('GEMINI_API_KEY', '');
   if (!key) throw new Error('GEMINI_API_KEY が未設定です');
-  const models = [prop('GEMINI_MODEL', 'gemini-3.8-flash'), 'gemini-2.5-flash']
-    .filter(function (m, i, arr) { return arr.indexOf(m) === i; });
+  const gen = { temperature: 0.9 };
+  if (asJson) gen.responseMimeType = 'application/json';
+  const body = { contents: [{ parts: parts }], generationConfig: gen };
+
+  // 指定モデル → 汎用の最新モデル（順番に）で、使えるものが見つかるまで試す
+  const first = resolveGeminiModel_(REQ_MODEL);
+  const models = [first].concat(FALLBACK_GEMINI_MODELS.filter(function (m) { return m !== first; }));
   let lastErr = '';
   for (let i = 0; i < models.length; i++) {
-    const gen = { temperature: 0.9 };
-    if (asJson) gen.responseMimeType = 'application/json';
-    const res = UrlFetchApp.fetch('https://generativelanguage.googleapis.com/v1beta/models/' + models[i] + ':generateContent', {
-      method: 'post', contentType: 'application/json', muteHttpExceptions: true,
-      headers: { 'x-goog-api-key': key },
-      payload: JSON.stringify({ contents: [{ parts: parts }], generationConfig: gen })
-    });
-    if (res.getResponseCode() === 200) {
-      const j = JSON.parse(res.getContentText());
+    const res = callGeminiModel_(models[i], key, body);
+    if (res.code === 200) {
+      const j = JSON.parse(res.text);
       const out = (j.candidates && j.candidates[0] && j.candidates[0].content && j.candidates[0].content.parts) || [];
-      return out.map(function (p) { return p.text || ''; }).join('');
+      const text = out.map(function (p) { return p.thought ? '' : (p.text || ''); }).join('');
+      if (text) { USED_MODEL = models[i]; return text; }
+      lastErr = '200 空の応答 (' + models[i] + ')';
+      continue;
     }
-    lastErr = res.getResponseCode() + ' ' + res.getContentText().slice(0, 200);
+    lastErr = res.code + ' ' + models[i] + ' ' + res.text.slice(0, 200);
+    if (isModelNotFound_(res.code, res.text)) {
+      console.warn('Geminiモデル「' + models[i] + '」に該当がないため次の候補に切り替えます');
+    } else if (GEMINI_RETRY_CODES.indexOf(res.code) !== -1) {
+      console.warn('Geminiモデル「' + models[i] + '」が混雑中 (HTTP ' + res.code + ') のため次の候補に切り替えます');
+    } else {
+      break; // キー不正・リクエスト不正などはモデルを変えても直らない
+    }
   }
   throw new Error('Gemini応答エラー: ' + lastErr);
 }
@@ -1244,7 +1317,19 @@ function tts(req) {
 }
 
 /* ========== 動作確認用（エディタから実行） ========== */
-function testGemini() { Logger.log(gemini('「こんにちは」とだけ返してください', false)); }
+function testGemini() {
+  Logger.log('GASバージョン: ' + VERSION + ' / 既定モデル: ' + resolveGeminiModel_(''));
+  Logger.log(gemini('「こんにちは」とだけ返してください', false));
+  Logger.log('応答したモデル: ' + USED_MODEL);
+}
+/** 選択肢の各モデルが使えるか確認（エディタから実行） */
+function testModels() {
+  ['gemini-4-hydrogen', 'gemini-4-neon', 'gemini-4-carbon', 'gemini-4-argon', 'gemini-3.8-flash', 'gemini-3.5-flash'].forEach(function (m) {
+    REQ_MODEL = m; USED_MODEL = '';
+    try { gemini('「OK」とだけ返してください', false); Logger.log(m + ' → ' + USED_MODEL + (USED_MODEL === m ? '' : '（自動切替）')); }
+    catch (e) { Logger.log(m + ' → 失敗: ' + e.message); }
+  });
+}
 function testMission() { Logger.log(JSON.stringify(generateMission(), null, 2)); }
 function testCleanSpeech() {
   Logger.log(cleanSpeech('承知しました。以下のセリフを読み上げます：\n「ミッション発令！（元気に）青いものを撮ろう」'));

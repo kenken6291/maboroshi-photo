@@ -577,3 +577,10 @@ output { font-weight: 800; color: var(--cherry); }
   .bottombar { gap: 20px; }
   .mission-chip { max-width: 520px; }
 }
+
+/* AIモデル選択 */
+.model-picker { margin: 4px 0 14px; }
+.model-picker label { display: block; margin-bottom: 4px; }
+.model-picker select { width: 100%; }
+.model-picker p { margin: 6px 0 0; font-size: 12px; }
+#verModel { font-size: 12px; word-break: break-all; }

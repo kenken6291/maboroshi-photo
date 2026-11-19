@@ -7,10 +7,27 @@
  */
 window.APP_CONFIG = {
   APP_NAME: 'まぼろしフォト',
-  VERSION: 'v1.4.4',
+  VERSION: 'v1.5.0',
 
   // GASウェブアプリのURL（デプロイ後に貼り替え）
   GAS_URL: 'https://script.google.com/macros/s/AKfycbzFZ4kwCPUHJNy5NceV70XHM6p6JYBC4PsKTfl2Cz7tOQu0QiRYoEgM3o_KWM0qhwh9fA/exec',
+
+  // 既定のGeminiモデル（利用者が画面で選ばなかった時に使う）
+  // 空文字 '' = 自動（汎用の最新モデル）
+  GEMINI_MODEL: '',
+
+  // メニュー「AIモデル」の選択肢（value がAPIのモデルID）
+  // 指定モデルに該当がない（廃止・未公開・名前違い）・混雑時は
+  // GAS側で汎用の最新モデルへ自動で切り替わる
+  GEMINI_MODEL_OPTIONS: [
+    { value: '',                  label: '自動モード（汎用の最新）' },
+    { value: 'gemini-4-hydrogen', label: '4 Hydrogen（日々の暮らしをサポート）' },
+    { value: 'gemini-4-neon',     label: '4 Neon（Deeper analysis）' },
+    { value: 'gemini-4-carbon',   label: '4 Carbon（Code & complex work）' },
+    { value: 'gemini-4-argon',    label: '4 Argon' },
+    { value: 'gemini-3.8-flash',  label: '3.8 Flash' },
+    { value: 'gemini-3.5-flash',  label: '3.5 Flash' }
+  ],
 
   // ブラウザ保存用のキー（他アプリと重ならない名前）
   STORAGE_KEY: 'maboroshi_photo',

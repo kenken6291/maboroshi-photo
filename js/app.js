@@ -1239,6 +1239,40 @@
   });
 
   /* ========== メニュー ========== */
+  /* ---------- AIモデル選択 ---------- */
+  let defaultModel = '';
+  function showModel(text) { const el = $('#verModel'); if (el) el.textContent = text; }
+  function currentModelText() {
+    const v = API.Model.get();
+    return v ? API.Model.label(v) : ('自動' + (defaultModel ? '（' + defaultModel + '）' : ''));
+  }
+  function setupModelPicker() {
+    const sel = $('#modelSelect');
+    if (!sel) return;
+    sel.innerHTML = '';
+    API.Model.options().forEach((o) => {
+      const op = document.createElement('option');
+      op.value = o.value; op.textContent = o.label;
+      sel.appendChild(op);
+    });
+    sel.value = API.Model.get();
+    sel.onchange = () => {
+      API.Model.set(sel.value);
+      showModel(currentModelText());
+      toast('AIモデル：' + API.Model.label(sel.value));
+    };
+    showModel(currentModelText());
+    window.addEventListener('ai-model-used', (e) => {
+      const d = e.detail || {};
+      showModel(d.fallback ? d.model + '（' + (d.requested || '指定モデル') + ' が使えず自動で切替）' : d.model);
+    });
+    // GASの既定モデルとバージョンを取得（失敗しても動作に影響なし）
+    fetch(CFG.GAS_URL, { redirect: 'follow' }).then((r) => r.json()).then((j) => {
+      if (j && j.defaultModel) { defaultModel = j.defaultModel; if (!API.Model.get()) showModel(currentModelText()); }
+      if (j && j.version && j.version !== CFG.VERSION) console.warn('GASのバージョンが異なります: GAS ' + j.version + ' / 画面 ' + CFG.VERSION);
+    }).catch(() => {});
+  }
+
   async function openMenu() {
     $('#menuNick').textContent = `${S.user.nickname} さん`;
     $('#adminMissionBtn').hidden = S.user.role !== 'admin';
@@ -1421,6 +1455,7 @@
   async function boot() {
     document.title = CFG.APP_NAME;
     $$('.ver').forEach((el) => { el.textContent = CFG.VERSION; });
+    setupModelPicker();
     bindEyes();
     initAuth();
     initUi();

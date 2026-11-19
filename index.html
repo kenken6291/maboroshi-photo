@@ -10,7 +10,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Dela+Gothic+One&family=M+PLUS+Rounded+1c:wght@500;700;800&family=Shippori+Mincho+B1:wght@600;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
-<link rel="stylesheet" href="css/style.css?v=1.4.4">
+<link rel="stylesheet" href="css/style.css?v=1.5.0">
 </head>
 <body>
 
@@ -238,10 +238,16 @@
       <button class="btn block" id="changePwBtn" type="button">パスワードを変更</button>
       <button class="btn block" type="button" data-open-tutorial>遊び方を見る</button>
       <button class="btn block lemon" id="adminMissionBtn" type="button" hidden>いますぐミッションを出す（管理者）</button>
+      <h3>AIモデル</h3>
+      <div class="model-picker">
+        <label for="modelSelect" class="muted small">ミッション・新聞記事・コメント判定に使うAI</label>
+        <select id="modelSelect"></select>
+        <p class="muted small">選んだモデルが使えない時は、汎用の最新モデルに自動で切り替わります</p>
+      </div>
       <h3>ブロック中のユーザー</h3>
       <ul id="blockList" class="blist"></ul>
       <button class="btn block danger" id="logoutBtn" type="button">ログアウト</button>
-      <p class="muted small center">まぼろしフォト <span class="ver"></span></p>
+      <p class="muted small center">まぼろしフォト <span class="ver"></span><br>AIモデル <code id="verModel">-</code></p>
     </div>
   </div>
 </div>
@@ -340,9 +346,9 @@
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
-<script src="js/config.js?v=1.4.4"></script>
-<script src="js/api.js?v=1.4.4"></script>
-<script src="js/voice.js?v=1.4.4"></script>
-<script src="js/app.js?v=1.4.4"></script>
+<script src="js/config.js?v=1.5.0"></script>
+<script src="js/api.js?v=1.5.0"></script>
+<script src="js/voice.js?v=1.5.0"></script>
+<script src="js/app.js?v=1.5.0"></script>
 </body>
 </html>
